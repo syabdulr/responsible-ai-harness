@@ -13,7 +13,11 @@
     "lint": "eslint .",
     "test": "vitest run",
     "demo": "tsx scripts/run-demo.ts",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "smoke:jev": "tsx scripts/smoke-jev.ts"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

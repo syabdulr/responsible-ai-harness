@@ -25,10 +25,10 @@ import {
 
 export type Valid<T> = { ok: true; value: T } | { ok: false; error: string };
 
-const ok = <T>(value: T): Valid<T> => ({ ok: true, value });
-const err = (error: string): Valid<never> => ({ ok: false, error });
+export const ok = <T>(value: T): Valid<T> => ({ ok: true, value });
+export const err = (error: string): Valid<never> => ({ ok: false, error });
 
-function isRecord(v: unknown): v is Record<string, unknown> {
+export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
@@ -41,7 +41,7 @@ export function parseJson(text: string): Valid<unknown> {
   }
 }
 
-function requireString(v: unknown, field: string): Valid<string> {
+export function requireString(v: unknown, field: string): Valid<string> {
   if (typeof v !== "string" || v.length === 0) return err(`${field} must be a non-empty string`);
   return ok(v);
 }
@@ -56,7 +56,7 @@ function requireSchemaVersion(v: unknown, field: string): Valid<string> {
 }
 
 /** ISO-8601 timestamp with an explicit UTC offset — `Z` or `±hh:mm`. */
-function requireTimestamp(v: unknown, field: string): Valid<string> {
+export function requireTimestamp(v: unknown, field: string): Valid<string> {
   const s = requireString(v, field);
   if (!s.ok) return s;
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(s.value)) {
@@ -67,7 +67,7 @@ function requireTimestamp(v: unknown, field: string): Valid<string> {
   return ok(s.value);
 }
 
-function requireNumber(v: unknown, field: string, min?: number, max?: number): Valid<number> {
+export function requireNumber(v: unknown, field: string, min?: number, max?: number): Valid<number> {
   if (typeof v !== "number" || !Number.isFinite(v)) return err(`${field} must be a finite number`);
   if (min !== undefined && v < min) return err(`${field} must be >= ${min}`);
   if (max !== undefined && v > max) return err(`${field} must be <= ${max}`);
@@ -79,7 +79,7 @@ function requireBoolean(v: unknown, field: string): Valid<boolean> {
   return ok(v);
 }
 
-function requireArray(v: unknown, field: string): Valid<unknown[]> {
+export function requireArray(v: unknown, field: string): Valid<unknown[]> {
   if (!Array.isArray(v)) return err(`${field} must be an array`);
   return ok(v);
 }

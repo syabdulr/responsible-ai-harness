@@ -91,14 +91,14 @@ describe("judge failure routing", () => {
   });
 
   it("Jev live mode disabled by default -> fails closed with no network", async () => {
-    const jev = new JevJudge({ secretRef: "jev/prod/key", modelId: "jev-1", endpointUrl: "https://jev.invalid/api", liveMode: false }, undefined);
+    const jev = new JevJudge({ secretRef: "jev/prod/key", liveMode: false, timeoutMs: 5000 }, undefined, undefined);
     const env = await jev.score({ caseId: "c2", events: [], category: "prompt_injection", evidence: {} });
     expect(env.ok).toBe(false);
     if (!env.ok) expect(env.error.code).toBe("jev_live_mode_disabled");
   });
 
   it("Jev with live mode on but no secret provider still fails closed", async () => {
-    const jev = new JevJudge({ secretRef: "jev/prod/key", modelId: "jev-1", endpointUrl: "https://jev.invalid/api", liveMode: true }, undefined);
+    const jev = new JevJudge({ secretRef: "jev/prod/key", liveMode: true, timeoutMs: 5000 }, undefined, undefined);
     const env = await jev.score({ caseId: "c3", events: [], category: "prompt_injection", evidence: {} });
     expect(env.ok).toBe(false);
     if (!env.ok) expect(env.error.code).toBe("jev_secret_unavailable");

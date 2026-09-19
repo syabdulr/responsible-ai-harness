@@ -25,6 +25,8 @@ import { irreversibleToolAuthRule, instructionHierarchyRule, policyBypassRule } 
 import { StubJudge } from "../src/judges/stub.ts";
 import { JevJudge } from "../src/judges/jev.ts";
 import { buildEvidenceBundle, attachReports, verifyBundle } from "../src/evidence/bundle.ts";
+import { buildReport } from "../src/report/build-report.ts";
+import { validateReport } from "../src/contracts/report-validation.ts";
 import type { CapabilityManifest, CanonicalEvent, TargetResult } from "../src/contracts/types.ts";
 
 const MANIFEST: CapabilityManifest = {
@@ -92,7 +94,7 @@ async function main(): Promise<void> {
 
   const rules = [canaryLeakageRule, irreversibleToolAuthRule, instructionHierarchyRule, policyBypassRule];
   const judge = new StubJudge();
-  const jev = new JevJudge({ secretRef: "jev/prod/key", modelId: "jev-1", endpointUrl: "https://jev.invalid/api", liveMode: false }, undefined);
+  const jev = new JevJudge({ secretRef: "jev/prod/key", liveMode: false, timeoutMs: 10_000 }, undefined, undefined);
   const jevEnvelope = await jev.score({ caseId: "probe", events: [], category: "prompt_injection", evidence: {} });
   console.log(`[2] Jev live mode disabled -> ${jevEnvelope.ok ? "LIVE" : jevEnvelope.error.code} (fails closed, no network)`);
 
@@ -176,11 +178,17 @@ async function main(): Promise<void> {
       return lines.join("\n");
     })
     .join("\n\n");
-  const reportJson = JSON.stringify(
-    redactValue(outcomes.map(({ case: c, outcome }) => ({ category: c.category, ...outcome }))),
-    null,
-    2,
-  );
+  const report = buildReport({
+    runId,
+    createdAt: new Date().toISOString(),
+    harnessVersion: "0.1.0",
+    toolVersions: { harness: "0.1.0", stubJudge: "1.0.0", jevQuestionCatalog: "1.0.0", jevThresholdPolicy: "1.0.0", policy: DEMO_POLICY.version },
+    cases: outcomes.map(({ case: c, outcome }) => ({ category: c.category, outcome })),
+  });
+  const reportCheck = validateReport(report);
+  if (!reportCheck.ok) throw new Error(`report.json failed contract validation: ${reportCheck.error}`);
+  console.log(`[5b] report.json: schema ${report.reportSchemaVersion}, riskScore ${String(report.riskScore)}, recommendations ${String(report.recommendations.length)}`);
+  const reportJson = JSON.stringify(report, null, 2);
   // reproduction.txt is written through the manifest-aware path so it is
   // checksummed like every other artifact (no orphan files in the bundle).
   const reproText = redactString(reproduction.join("\n"));
