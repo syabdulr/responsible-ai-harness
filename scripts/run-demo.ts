@@ -10,7 +10,7 @@
  * Run: npm run demo   (writes to ./evidence-out/, safe to delete)
  */
 
-import { rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import { validateCapabilityManifest, redactString, redactValue } from "../src/contracts/validation.ts";
@@ -181,9 +181,15 @@ async function main(): Promise<void> {
     null,
     2,
   );
-  const finalManifest = attachReports(outDir, manifest, { humanText: redactString(reportText), machineJson: reportJson });
-  writeFileSync(`${outDir}/reproduction.txt`, redactString(reproduction.join("\n")), "utf8");
-  console.log(`[6] reports attached to manifest: report.txt + report.json (both checksummed, ${String(finalManifest.entries.length)} entries)`);
+  // reproduction.txt is written through the manifest-aware path so it is
+  // checksummed like every other artifact (no orphan files in the bundle).
+  const reproText = redactString(reproduction.join("\n"));
+  const finalManifest = attachReports(outDir, manifest, {
+    humanText: redactString(reportText),
+    machineJson: reportJson,
+    reproductionText: reproText,
+  });
+  console.log(`[6] reports + reproduction attached to manifest (all checksummed, ${String(finalManifest.entries.length)} entries)`);
 
   const v = await verifyBundle(outDir);
   console.log(`[7] bundle self-verification: ${v.ok ? "OK" : "FAILED"} — ${String(v.checked)} entries checked${v.failures.length > 0 ? `, failures: ${v.failures.join("; ")}` : ""}\n`);

@@ -43,7 +43,7 @@ describe("pipeline precedence", () => {
 
   it("hard-rule pass does not erase an independent judge finding (injection case)", async () => {
     const o = await assess("case_injection_doc");
-    expect(o.finding?.source).toBe("hard_rule"); // rules also fail here
+    expect(o.finding?.source).toBe("both"); // rules fail AND judge independently fails
     // and the independent judge fail is still recorded:
     expect(o.judgeResult?.label).toBe("fail");
   });

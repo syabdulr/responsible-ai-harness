@@ -7,8 +7,9 @@
  *   - SSRF guard: loopback, link-local, metadata service (169.254.169.254),
  *     private IPv4, local/private IPv6, and 0.0.0.0 are blocked unless the
  *     config explicitly opts in for a local synthetic target
- *   - DNS rebinding mitigation: hostname resolved and EVERY address validated
- *     before the request is issued (re-validated on each retry attempt)
+ *   - DNS rebinding mitigation (partial): hostname resolved and every address
+ *     validated before the request, re-validated per retry; Node fetch can
+ *     still re-resolve between validation and connection (TOCTOU window)
  *   - redirect rejection (3xx = error, never followed)
  *   - non-2xx responses are errors (with status code)
  *   - response-size cap (streamed byte counter, aborted on breach)
@@ -148,33 +149,55 @@ function ipv4ToInt(ip: string): number | undefined {
   return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
 }
 
-function inCidr4(ip: string, prefix: string, bits: number): boolean {
-  const ipInt = ipv4ToInt(ip);
-  const preInt = ipv4ToInt(prefix);
-  if (ipInt === undefined || preInt === undefined) return false;
-  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-  return (ipInt & mask) === (preInt & mask);
-}
-
 /** True when the address is safe for outbound requests. */
 export function isSafeAddress(ip: string): boolean {
   // IPv6 forms
   const v6 = ip.toLowerCase();
   if (v6 === "::" || v6 === "::1") return false;
-  if (v6.startsWith("fe80") || v6.startsWith("fc") || v6.startsWith("fd")) return false;
-  if (v6.startsWith("::ffff:")) return isSafeAddress(v6.slice(7));
+  // Link-local fe80::/10 = fe80..febf (not just the fe80 string prefix).
+  const head = /^([0-9a-f]{1,4})/.exec(v6.replace(/^::/, ""))?.[1] ?? "";
+  const first16 = parseInt(head.padStart(4, "0").slice(0, 4), 16);
+  if (!Number.isNaN(first16) && first16 >= 0xfe80 && first16 <= 0xfebf) return false;
+  // Unique-local fc00::/7 = fc..fd prefixes.
+  if (v6.startsWith("fc") || v6.startsWith("fd")) return false;
+  // IPv4-mapped ::ffff:x — dotted AND alternate hexadecimal forms.
+  if (v6.startsWith("::ffff:")) {
+    const tail = v6.slice(7);
+    if (tail.includes(".")) return isSafeAddress(tail); // dotted form
+    // Hexadecimal mapped form: exactly two hextets encoding 32 bits,
+    // e.g. ::ffff:7f00:1 == 127.0.0.1. Join into full 8 hex digits —
+    // anything else fails closed.
+    const parts = tail.split(":");
+    const hi = parts[0];
+    const lo = parts[1];
+    if (parts.length === 2 && hi !== undefined && lo !== undefined && /^[0-9a-f]{1,4}$/.test(hi) && /^[0-9a-f]{1,4}$/.test(lo)) {
+      const v4int = parseInt(hi.padStart(4, "0") + lo.padStart(4, "0"), 16) >>> 0;
+      return isSafeIpv4Int(v4int);
+    }
+    return false; // unparseable mapped form — fail closed
+  }
   // IPv4
   const v4 = ipv4ToInt(ip);
   if (v4 === undefined) return true; // not an IPv4 literal (IPv6 handled above)
-  if (v4 === 0) return false; // 0.0.0.0
-  if (inCidr4(ip, "10.0.0.0", 8)) return false;
-  if (inCidr4(ip, "172.16.0.0", 12)) return false;
-  if (inCidr4(ip, "192.168.0.0", 16)) return false;
-  if (inCidr4(ip, "127.0.0.0", 8)) return false;
-  if (inCidr4(ip, "169.254.0.0", 16)) return false; // link-local + cloud metadata
-  if (inCidr4(ip, "100.64.0.0", 10)) return false; // CGNAT
-  if (inCidr4(ip, "192.0.0.0", 24)) return false;
-  if (inCidr4(ip, "198.18.0.0", 15)) return false; // benchmarking
+  return isSafeIpv4Int(v4);
+}
+
+function isSafeIpv4Int(v4: number): boolean {
+  const inRange = (ipInt: number, prefix: number, bits: number): boolean => {
+    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+    return (ipInt & mask) === ((prefix >>> 0) & mask);
+  };
+  if (v4 === 0) return false; // 0.0.0.0 (this network)
+  if (inRange(v4, 10 << 24, 8)) return false;
+  if (inRange(v4, (172 << 24) | (16 << 16), 12)) return false;
+  if (inRange(v4, (192 << 24) | (168 << 16), 16)) return false;
+  if (inRange(v4, 127 << 24, 8)) return false; // loopback
+  if (inRange(v4, (169 << 24) | (254 << 16), 16)) return false; // link-local + metadata
+  if (inRange(v4, (100 << 24) | (64 << 16), 10)) return false; // CGNAT
+  if (inRange(v4, 192 << 24, 24)) return false; // 192.0.0.0/24
+  if (inRange(v4, (198 << 24) | (18 << 16), 15)) return false; // benchmarking
+  if (inRange(v4, 224 << 24, 4)) return false; // multicast 224.0.0.0/4
+  if (inRange(v4, 240 << 24, 4)) return false; // reserved 240.0.0.0/4 (incl. broadcast)
   return true;
 }
 

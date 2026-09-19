@@ -74,6 +74,38 @@ describe("REST adapter — SSRF address guard", () => {
     }
   });
 
+  it("blocks the FULL fe80::/10 link-local range (fe80..febf)", () => {
+    for (const ip of ["fe80::1", "fe8f::", "fe90::1", "feab::2", "febf::ffff"]) {
+      expect(isSafeAddress(ip), ip).toBe(false);
+    }
+    // fec0::/10 (site-local, deprecated) is outside the blocked range but
+    // still private-ish; we explicitly do NOT claim it is blocked.
+  });
+
+  it("blocks alternate hexadecimal IPv4-mapped forms", () => {
+    // ::ffff:7f00:1 == 127.0.0.1 ; ::ffff:0a00:0001 == 10.0.0.1
+    expect(isSafeAddress("::ffff:7f00:1")).toBe(false);
+    expect(isSafeAddress("::ffff:0a00:0001")).toBe(false);
+    expect(isSafeAddress("::ffff:a00:1")).toBe(false); // 10.0.0.1 short form
+    expect(isSafeAddress("::ffff:ac10:0001")).toBe(false); // 172.16.0.1
+    expect(isSafeAddress("::ffff:c0a8:0101")).toBe(false); // 192.168.1.1
+    // A public address in mapped form must still pass.
+    expect(isSafeAddress("::ffff:0101:0101")).toBe(true); // 1.1.1.1
+    // Dotted mapped form still blocked for private v4.
+    expect(isSafeAddress("::ffff:127.0.0.1")).toBe(false);
+  });
+
+  it("blocks IPv4 multicast 224.0.0.0/4 and reserved 240.0.0.0/4", () => {
+    for (const ip of ["224.0.0.1", "230.1.2.3", "239.255.255.254"]) {
+      expect(isSafeAddress(ip), `${ip} multicast`).toBe(false);
+    }
+    for (const ip of ["240.0.0.1", "250.10.20.30", "255.255.255.255"]) {
+      expect(isSafeAddress(ip), `${ip} reserved/broadcast`).toBe(false);
+    }
+    // Edge: last unicast address still safe.
+    expect(isSafeAddress("223.255.255.255")).toBe(true);
+  });
+
   it("rejects when DNS resolution returns a blocked address (DNS rebinding)", async () => {
     const adapter = createRestAdapter(baseConfig, {
       dnsLookup: async () => ["169.254.169.254"], // public name, private address

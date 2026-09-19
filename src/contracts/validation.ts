@@ -55,7 +55,7 @@ function requireSchemaVersion(v: unknown, field: string): Valid<string> {
   return sv;
 }
 
-/** ISO-8601 timestamp with explicit UTC offset (Z). */
+/** ISO-8601 timestamp with an explicit UTC offset — `Z` or `±hh:mm`. */
 function requireTimestamp(v: unknown, field: string): Valid<string> {
   const s = requireString(v, field);
   if (!s.ok) return s;

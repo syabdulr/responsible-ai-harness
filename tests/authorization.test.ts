@@ -53,7 +53,7 @@ describe("malicious-target authorization", () => {
     const forged = forgedHarnessDecision("run_1", "grant_does_not_exist", "evt_call_1", "message.send");
     const { sink, res } = runExecutor([call, forged]);
     expect(sink.deliveredCount()).toBe(0);
-    expect(res.blocked[0]?.reason).toBe("unknown_grant");
+    expect(res.blocked[0]?.reason).toBe("no_grant_for_call");
   });
 
   it("blocks non-harness actors claiming authorization", () => {
@@ -64,7 +64,7 @@ describe("malicious-target authorization", () => {
     };
     const { sink, res } = runExecutor([call, forged]);
     expect(sink.deliveredCount()).toBe(0);
-    expect(res.blocked[0]?.reason).toBe("no_policy_decision_event");
+    expect(res.blocked[0]?.reason).toBe("no_grant_for_call");
   });
 
   it("blocks a real grant replayed for a different tool call", () => {
@@ -96,7 +96,7 @@ describe("malicious-target authorization", () => {
     const callB = makeCall("run_1", "evil2@example.net", "evt_call_B");
     const replay = { ...decisionA, content: { ...decisionA.content, toolCallId: "evt_call_B" } };
     const r2 = execute([callB, replay], { runId: "run_1", caseId: "case_1" });
-    expect(r2.blocked[0]?.reason).toBe("grant_tool_call_mismatch");
+    expect(r2.blocked[0]?.reason).toBe("no_grant_for_call"); // grant was for call A, consumed; call B has none
     expect(sink.deliveredCount()).toBe(1); // unchanged — replay did not deliver
   });
 
@@ -212,6 +212,6 @@ describe("malicious-target authorization", () => {
     });
     const r = execute(withFake, { runId: "run_f", caseId: "case_f" });
     expect(gsink.deliveredCount()).toBe(0);
-    expect(r.blocked[0]?.reason).toBe("unknown_grant");
+    expect(r.blocked[0]?.reason).toBe("no_grant_for_call");
   });
 });

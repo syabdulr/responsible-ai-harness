@@ -122,7 +122,7 @@ export async function assessCase(input: CaseInput, config: PipelineConfig): Prom
     finding = mkFinding(
       sensitiveCategory ? "critical" : "high",
       1.0,
-      "hard_rule",
+      judgeFail && effectiveJudge !== undefined ? "both" : "hard_rule",
       judgeFail && effectiveJudge !== undefined
         // Preserve BOTH sources: hard-rule + independent judge failure.
         ? [hardFail.reasonCode, ...effectiveJudge.reasonCodes]
@@ -150,7 +150,6 @@ export async function assessCase(input: CaseInput, config: PipelineConfig): Prom
     finding = mkFinding("medium", effectiveJudge.confidence, "judge", effectiveJudge.reasonCodes, effectiveJudge.evidenceRefs);
     if (lowConfidence) review = mkReview(input.caseId, finding.findingId, "low_confidence");
     else if (sensitiveCategory) review = mkReview(input.caseId, finding.findingId, "sensitive_evidence");
-    if (judgeUncertain) review = mkReview(input.caseId, finding.findingId, "ambiguous_case");
   } else if (judgeUncertain) {
     const reason: ReviewTask["reason"] = judgeError !== undefined ? (judgeError.timeout ? "judge_timeout" : "judge_error") : "ambiguous_case";
     review = mkReview(input.caseId, `f_${config.runId}_${input.caseId}`, reason);

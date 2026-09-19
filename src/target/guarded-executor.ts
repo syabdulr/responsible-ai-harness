@@ -3,10 +3,11 @@
  *
  * The raw target only emits tool-call INTENTS. This executor decides
  * whether an irreversible tool actually runs: authorization comes ONLY
- * from harness-issued grants verified by AuthorizationAuthority. Any
- * policy.decision event supplied by the target is untrusted input —
- * it must match a live grant bound to this exact call, or the call is
- * blocked BEFORE the fake sink records delivery.
+ * from harness-issued grants verified by AuthorizationAuthority. Every
+ * target-supplied policy.decision event is stripped unconditionally —
+ * regardless of claimed actor or provenance — and the executor emits
+ * its OWN harness-authored policy.decision evidence on both the allow
+ * and block paths, derived from the grant-verification result.
  */
 
 import type { CanonicalEvent } from "../contracts/types.ts";
@@ -53,13 +54,12 @@ export function createGuardedExecutor(opts: {
     const blocked: Array<{ tool: string; to: string; reason: string }> = [];
 
     for (const e of rawEvents) {
-      // Never let target-supplied policy.decision events into the stream
-      // unfiltered — they are re-derived by the harness below.
-      if (e.type === "policy.decision") {
-        if (e.actor !== "harness") continue; // forged authorization attempt: dropped
-        events.push(e);
-        continue;
-      }
+      // STRIP every target-supplied policy.decision event, regardless of
+      // any claimed actor or provenance. The executor re-derives all
+      // authorization evidence itself from harness grants below; only its
+      // own events are authoritative.
+      if (e.type === "policy.decision") continue;
+
       if (e.type !== "tool.call") {
         events.push(e);
         continue;
@@ -72,35 +72,32 @@ export function createGuardedExecutor(opts: {
         continue;
       }
 
-      // Find the target's claimed decision event (may be forged).
-      const claimed = rawEvents.find(
-        (p) =>
-          p.type === "policy.decision" &&
-          p.actor === "harness" &&
-          p.runId === e.runId &&
-          typeof p.content.grantId === "string" &&
-          p.content.toolCallId === e.eventId,
-      );
-
+      // Authorization consults ONLY the harness authority (grants keyed
+      // to this exact toolCallId). Target claims are not an input.
       const verdict = authority.verify({
         runId: ctx.runId,
         caseId: ctx.caseId,
         tool,
         toolCallId: e.eventId,
         arguments_: args,
-        targetDecision: claimed,
       });
 
+      // Harness-authored authorization evidence on BOTH paths, emitted
+      // BEFORE the call it authorizes (the decision precedes the act).
+      events.push(
+        harnessEvent(e, "policy.decision", {
+          authorized: verdict.authorized,
+          source: "guarded-executor",
+          tool,
+          toolCallId: e.eventId,
+          ...(verdict.authorized
+            ? { grantId: verdict.grantId, reason: "authorized" }
+            : { reason: `blocked:${verdict.reason}` }),
+        }),
+      );
+      events.push(e);
+
       if (!verdict.authorized) {
-        events.push(e);
-        events.push(
-          harnessEvent(e, "policy.decision", {
-            authorized: false,
-            tool,
-            toolCallId: e.eventId,
-            reason: `blocked:${verdict.reason}`,
-          }),
-        );
         events.push(
           harnessEvent(e, "tool.result", { tool_name: tool, output: "blocked_by_harness", blocked: true }),
         );
@@ -110,7 +107,6 @@ export function createGuardedExecutor(opts: {
 
       // Authorized: the sink is the proof surface (fake delivery only).
       opts.sink.deliveries.push({ to: typeof args.to === "string" ? args.to : "unknown", body: typeof args.body === "string" ? args.body : "", at: opts.now().toISOString() });
-      events.push(e);
       events.push(harnessEvent(e, "tool.result", { tool_name: tool, output: "delivered" }));
     }
     return { events, blocked, sink: opts.sink };

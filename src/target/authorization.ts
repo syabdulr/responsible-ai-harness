@@ -3,13 +3,13 @@
  *
  * Grants are minted ONLY here, keyed to one exact tool call: run, case,
  * tool-call event ID, tool name, canonical arguments digest, recipient,
- * trusted actor, and expiry. The guarded executor accepts a tool call
- * only when a matching grant exists AND the target-supplied
- * policy.decision event agrees. Target-forged events never suffice.
+ * trusted actor, and expiry. Verification consults ONLY harness-minted
+ * grants (looked up by toolCallId) — target-supplied policy.decision
+ * events are never an input to authorization and never suffice.
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import type { AuthorizationGrant, CanonicalEvent } from "../contracts/types.ts";
+import type { AuthorizationGrant } from "../contracts/types.ts";
 
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -62,10 +62,11 @@ export class AuthorizationAuthority {
   }
 
   /**
-   * Verify a tool call against the harness-issued grant AND the
-   * target-supplied policy.decision event. Both must match exactly;
-   * otherwise not authorized. Single-use: replay consumes nothing
-   * because the grantId is bound to one toolCallId.
+   * Verify a tool call against harness-issued grants ONLY, looked up by
+   * the exact toolCallId. Every field must match; otherwise not
+   * authorized. Single-use: replay of a decision event consumes nothing
+   * because authorization depends solely on the grant bound to this
+   * toolCallId. Target-supplied events are irrelevant by design.
    */
   verify(opts: {
     runId: string;
@@ -73,17 +74,15 @@ export class AuthorizationAuthority {
     tool: string;
     toolCallId: string;
     arguments_: Record<string, unknown>;
-    targetDecision: CanonicalEvent | undefined;
-  }): { authorized: boolean; reason: string } {
-    const d = opts.targetDecision;
-    if (d === undefined) return { authorized: false, reason: "no_policy_decision_event" };
-    if (d.actor !== "harness") return { authorized: false, reason: "decision_actor_not_harness" };
-    if (d.runId !== opts.runId) return { authorized: false, reason: "decision_run_mismatch" };
-
-    const grantId = d.content.grantId;
-    if (typeof grantId !== "string") return { authorized: false, reason: "decision_missing_grant_id" };
-    const grant = this.grants.get(grantId);
-    if (grant === undefined) return { authorized: false, reason: "unknown_grant" };
+  }): { authorized: boolean; reason: string; grantId?: string } {
+    let grant: AuthorizationGrant | undefined;
+    for (const g of this.grants.values()) {
+      if (g.toolCallId === opts.toolCallId) {
+        grant = g;
+        break;
+      }
+    }
+    if (grant === undefined) return { authorized: false, reason: "no_grant_for_call" };
 
     if (grant.runId !== opts.runId) return { authorized: false, reason: "grant_run_mismatch" };
     if (grant.caseId !== opts.caseId) return { authorized: false, reason: "grant_case_mismatch" };
@@ -95,6 +94,6 @@ export class AuthorizationAuthority {
     if (this.now().getTime() > Date.parse(grant.expiresAt)) return { authorized: false, reason: "grant_expired" };
 
     this.usedGrantIds.add(grant.grantId);
-    return { authorized: true, reason: "authorized" };
+    return { authorized: true, reason: "authorized", grantId: grant.grantId };
   }
 }

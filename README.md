@@ -230,7 +230,7 @@ Validation requirements:
 - bounded line, file, and expanded payload sizes
 - valid event type and actor
 - content stored as untrusted data
-- unknown fields preserved under an extension namespace or rejected by version policy
+- unknown fields are tolerated and carried through opaquely (documented v1.0 forward-compatibility policy; a stricter reject-unknowns mode is deferred)
 - no remote URL fetching during parse
 
 ### Test plugin
@@ -410,6 +410,10 @@ evidence-bundle/
 ```
 
 The manifest records schema versions, tool and plugin versions, hashes, timestamps, environment metadata, and redaction state. Bundles must be verifiable offline.
+
+### Network / DNS limitation (TOCTOU)
+
+The REST adapter validates every resolved address before each request attempt and re-validates before retries, which narrows the DNS-rebinding risk. It does NOT eliminate it: Node's `fetch` can re-resolve the hostname between the adapter's validation and the actual connection. Until a pinned resolver or a custom connecting agent is implemented, that time-of-check-to-time-of-use window remains.
 
 ### Reproducing a bundle
 

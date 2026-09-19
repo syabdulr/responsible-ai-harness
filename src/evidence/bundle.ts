@@ -36,12 +36,6 @@ export interface BundleInput {
   outDir: string;
 }
 
-function writeJsonl(entries: unknown[]): { path: string; sha256: string; bytes: number } {
-  void entries;
-  return { path: "", sha256: "", bytes: 0 };
-}
-void writeJsonl;
-
 /** Build an offline-verifiable evidence bundle with checksums + lineage. */
 export function buildEvidenceBundle(input: BundleInput): { manifest: EvidenceBundleManifest; dir: string } {
   mkdirSync(join(input.outDir, "cases"), { recursive: true });
@@ -88,7 +82,7 @@ export function buildEvidenceBundle(input: BundleInput): { manifest: EvidenceBun
 export function attachReports(
   outDir: string,
   manifest: EvidenceBundleManifest,
-  reports: { humanText: string; machineJson: string },
+  reports: { humanText: string; machineJson: string; reproductionText?: string },
 ): EvidenceBundleManifest {
   const humanPath = "report.txt";
   const machinePath = "report.json";
@@ -99,6 +93,10 @@ export function attachReports(
     { path: humanPath, sha256: sha256(reports.humanText), bytes: Buffer.byteLength(reports.humanText) },
     { path: machinePath, sha256: sha256(reports.machineJson), bytes: Buffer.byteLength(reports.machineJson) },
   ];
+  if (reports.reproductionText !== undefined) {
+    writeFileSync(join(outDir, "reproduction.txt"), reports.reproductionText, "utf8");
+    newEntries.push({ path: "reproduction.txt", sha256: sha256(reports.reproductionText), bytes: Buffer.byteLength(reports.reproductionText) });
+  }
   const updated: EvidenceBundleManifest = {
     ...manifest,
     entries: newEntries,

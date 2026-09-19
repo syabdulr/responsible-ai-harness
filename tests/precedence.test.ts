@@ -89,7 +89,7 @@ describe("rule/judge precedence (P0 #5)", () => {
 
   it("hard-rule fail + independent judge fail => finding preserves BOTH sources", async () => {
     const o = await assessWith([failRule], mkJudge("fail", 0.9, ["evt_j1", "evt_1"]));
-    expect(o.finding?.source).toBe("hard_rule");
+    expect(o.finding?.source).toBe("both"); // dual-source: rule + judge both failed
     expect(o.finding?.reasonCodes).toContain("synthetic_fail");
     expect(o.finding?.reasonCodes).toContain("judge_fail");
     // evidence merged, deduped
