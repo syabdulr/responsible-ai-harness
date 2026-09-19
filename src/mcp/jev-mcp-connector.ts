@@ -8,11 +8,17 @@
  *   access, no shell execution, no arbitrary HTTP fetch, no environment
  *   dump. The only environment variable this module ever reads is
  *   `TYPESAFE_API_KEY`, and only inside the secret provider closure.
- * - The tool accepts ONLY the validated, redacted assessment schema below
- *   (`EvaluateCaseInput`) — a fixed `{caseId, category, evidence}` shape,
- *   `strictObject`-checked so unknown fields are rejected outright. There
- *   is no "prompt" field, no "endpoint" field, no way to redirect the
- *   call anywhere but the one hardcoded Jev transport.
+ * - The tool accepts ONLY the closed, versioned assessment schema below
+ *   (`EvaluateCaseInputSchema`) — a discriminated union on `category`,
+ *   where each branch lists the small, explicit, bounded set of redacted
+ *   evidence facts that category's question catalog actually needs (see
+ *   `jev-questions.ts`). Every object is `strictObject`-checked at every
+ *   nesting level, every string has a length bound, and there are no
+ *   arrays, no free-form nested objects, and no field for a prompt, an
+ *   endpoint/URL, a raw events array, a provider config, a model
+ *   override, or a secretRef. There is no way to redirect the call
+ *   anywhere but the one hardcoded Jev transport, and no way to smuggle
+ *   an unbounded blob through a field that looks legitimate.
  * - Every actual network call runs through `JevJudge`, so the one-call/
  *   no-retry guarantee, the allowlisted outbound state, the redact-again
  *   pass, the residual-risk gate, and the fixed-public-error-code
@@ -32,45 +38,85 @@ import { JevJudge } from "../judges/jev.ts";
 import type { JevClientFactory, RuntimeSecretProvider } from "../judges/jev.ts";
 import { createTypeSafeJevTransport } from "../judges/jev-transport-typesafe.ts";
 
-export const JEV_MCP_CONNECTOR_VERSION = "1.0.0";
+export const JEV_MCP_CONNECTOR_VERSION = "2.0.0";
 export const EVALUATE_TOOL_NAME = "evaluate_responsible_ai_case";
 export const JEV_MCP_SECRET_REF = "env:TYPESAFE_API_KEY";
+/** Versions the *shape* of EvaluateCaseInputSchema; bump on any field/bound change. */
+export const EVALUATE_CASE_SCHEMA_VERSION = "1.0.0";
 
-/** Bounded request size — a large evidence blob is refused, not truncated. */
-export const MAX_EVIDENCE_BYTES = 32_000;
 /** Bounded, fixed per-call timeout for the one TypeSafe call this tool makes. */
 export const EVALUATE_TIMEOUT_MS = 15_000;
 
-/** The only categories Jev ever scores (see jev-questions.ts's CATEGORY_QUESTION_IDS). */
-const SCORABLE_CATEGORIES = ["prompt_injection", "secret_pii_leakage", "unsafe_tool_use", "policy_bypass"] as const;
+const CASE_ID_MAX = 200;
+/** A redacted excerpt, not a raw blob — bounded so no field can carry an unbounded document. */
+const EXCERPT_MAX = 2000;
+const TOOL_NAME_MAX = 100;
+const RECIPIENT_MAX = 200;
+
+const caseId = z.string().min(1).max(CASE_ID_MAX);
+/** A single already-redacted line/paragraph, not free-form nested content. */
+const excerpt = () => z.string().min(1).max(EXCERPT_MAX);
+const optionalExcerpt = () => z.string().min(1).max(EXCERPT_MAX).optional();
 
 /**
- * The validated, redacted assessment schema — the ONLY shape this tool
- * accepts. `.strict()` rejects any field not listed here, so a caller
- * cannot smuggle in a "prompt", "endpoint", "url", or any other steering
- * field; `evidence` is bounded and content-checked in `.superRefine`.
+ * Closed, versioned, per-category evidence shapes — the small approved
+ * set of redacted facts each category's question catalog (jev-questions.ts)
+ * actually needs. No arrays, no nested objects, no open-ended records:
+ * every field is a bounded string or a boolean, and `.strict()` rejects
+ * anything else at every level.
  */
-export const EvaluateCaseInputSchema = z
-  .object({
-    caseId: z.string().min(1).max(200),
-    category: z.enum(SCORABLE_CATEGORIES),
-    evidence: z.record(z.string(), z.unknown()),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    let size: number;
-    try {
-      size = Buffer.byteLength(JSON.stringify(value.evidence), "utf8");
-    } catch {
-      ctx.addIssue({ code: "custom", message: "evidence must be JSON-serializable" });
-      return;
-    }
-    if (size > MAX_EVIDENCE_BYTES) {
-      ctx.addIssue({ code: "custom", message: `evidence exceeds the ${String(MAX_EVIDENCE_BYTES)}-byte bound (was ${String(size)} bytes)` });
-    }
-  });
+const PromptInjectionEvidence = z.strictObject({
+  /** Redacted excerpt of the untrusted content (retrieved doc, tool output, ...). */
+  untrustedContentExcerpt: excerpt(),
+  /** Redacted excerpt of what the assistant actually said/did in response. */
+  assistantResponseExcerpt: excerpt(),
+});
+
+const SecretPiiLeakageEvidence = z.strictObject({
+  /** Redacted excerpt of the assistant's visible output. */
+  assistantOutputExcerpt: excerpt(),
+  /** Redacted excerpt of tool-call arguments, if any tool was called. */
+  toolArgumentsExcerpt: optionalExcerpt(),
+  /** Redacted excerpt of a tool result, if any tool was called. */
+  toolResultExcerpt: optionalExcerpt(),
+});
+
+const UnsafeToolUseEvidence = z.strictObject({
+  /** The tool's own name (e.g. "message.send"), not a description. */
+  toolName: z.string().min(1).max(TOOL_NAME_MAX),
+  /** Redacted recipient/account/scope the tool call targeted, if applicable. */
+  recipient: z.string().min(1).max(RECIPIENT_MAX).optional(),
+  confirmationObtained: z.boolean(),
+  authorizationGranted: z.boolean(),
+});
+
+const PolicyBypassEvidence = z.strictObject({
+  /** Redacted excerpt of the (possibly obfuscated) request. */
+  userRequestExcerpt: excerpt(),
+  /** Redacted excerpt of the assistant's response. */
+  assistantResponseExcerpt: excerpt(),
+});
+
+/**
+ * The closed, versioned assessment schema — the ONLY shape this tool
+ * accepts. A discriminated union on `category`, each branch
+ * `.strict()`-checked at every level: no unknown top-level field, no
+ * unknown nested field, and no field type this tool doesn't explicitly
+ * define (no arrays, no open objects, no unbounded strings).
+ */
+export const EvaluateCaseInputSchema = z.discriminatedUnion("category", [
+  z.strictObject({ caseId, category: z.literal("prompt_injection"), evidence: PromptInjectionEvidence }),
+  z.strictObject({ caseId, category: z.literal("secret_pii_leakage"), evidence: SecretPiiLeakageEvidence }),
+  z.strictObject({ caseId, category: z.literal("unsafe_tool_use"), evidence: UnsafeToolUseEvidence }),
+  z.strictObject({ caseId, category: z.literal("policy_bypass"), evidence: PolicyBypassEvidence }),
+]);
 
 export type EvaluateCaseInput = z.infer<typeof EvaluateCaseInputSchema>;
+
+/** Repackages the closed per-category evidence facts into the same allowlisted `{caseId, category, evidence}` shape JevJudge builds internally (see jev.ts). */
+function toJevEvidence(input: EvaluateCaseInput): Record<string, unknown> {
+  return { ...input.evidence };
+}
 
 /** Only these fields ever leave the connector on a successful evaluation. */
 export interface EvaluateCaseSuccess {
@@ -106,7 +152,7 @@ function envelopeToOutput(envelope: JudgeEnvelope): EvaluateCaseOutput {
  * a fake `JevJudge` to avoid any network dependency.
  */
 export async function evaluateResponsibleAiCase(input: EvaluateCaseInput, jev: JevJudge): Promise<EvaluateCaseOutput> {
-  const envelope = await jev.score({ caseId: input.caseId, category: input.category, evidence: input.evidence, events: [] });
+  const envelope = await jev.score({ caseId: input.caseId, category: input.category, evidence: toJevEvidence(input), events: [] });
   return envelopeToOutput(envelope);
 }
 

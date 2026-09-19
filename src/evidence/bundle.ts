@@ -21,7 +21,8 @@ import type {
 } from "../contracts/types.ts";
 import { findResidualRiskIndicators, redactString, redactValue, validateBundleManifest, parseJson } from "../contracts/validation.ts";
 import { validateReport } from "../contracts/report-validation.ts";
-import type { ReportV1 } from "../contracts/report-types.ts";
+import { openReportArtifact } from "../report/build-report.ts";
+import type { ValidatedReportArtifact } from "../report/build-report.ts";
 import { sha256 } from "../normalizer/normalize.ts";
 
 export interface BundleInput {
@@ -83,28 +84,34 @@ export function buildEvidenceBundle(input: BundleInput): { manifest: EvidenceBun
 /**
  * Attach the human and machine reports to the bundle manifest + checksums.
  *
- * `machineReport` can ONLY be a `ReportV1` value — never a pre-serialized
- * string a caller might forget to redact or that could be assembled by
- * hand. It is validated against the report contract (`validateReport`)
- * before anything is written; an invalid report throws rather than
- * writing unverified content to disk. `humanText`/`reproductionText` have
- * no equivalent typed contract, so they are redacted again here
- * (idempotent defense in depth) regardless of what the caller already did.
- *
- * `machineReport` is expected to already be redacted (today, its only
- * producer, `buildReport`, redacts before computing the integrity hash).
- * That expectation is not just trusted, though: a residual-risk scan
- * (the same paranoid second pass `JevJudge` runs before a live call) also
- * runs here, so a hand-built or future-producer `ReportV1` that slipped a
- * secret into a free-text field (a finding's `reasonCodes`, a review's
- * `note`, ...) is refused rather than written to disk.
+ * `machineReport` can ONLY be a `ValidatedReportArtifact` — the sealed,
+ * branded wrapper `buildReport` returns (see its doc comment) — never a
+ * plain `ReportV1` a caller could assemble or mutate by hand. Getting a
+ * value of that type without going through `buildReport` requires a
+ * visible `as unknown as` cast; this function does not rely on that
+ * alone, though. It re-verifies the artifact's integrity hash itself
+ * (`openReportArtifact` throws if the hash no longer matches the
+ * report's content — the exact case of a report mutated, accidentally or
+ * not, after `buildReport` returned it), then re-validates the contract
+ * shape (`validateReport`) and runs a residual-risk scan (the same
+ * paranoid second pass `JevJudge` runs before a live call) before
+ * anything is written. Any of these three checks failing throws rather
+ * than writing unverified or stale content to disk. `humanText`/
+ * `reproductionText` have no equivalent typed contract, so they are
+ * redacted again here (idempotent defense in depth) regardless of what
+ * the caller already did.
  */
 export function attachReports(
   outDir: string,
   manifest: EvidenceBundleManifest,
-  reports: { humanText: string; machineReport: ReportV1; reproductionText?: string },
+  reports: { humanText: string; machineReport: ValidatedReportArtifact; reproductionText?: string },
 ): EvidenceBundleManifest {
-  const reportCheck = validateReport(reports.machineReport);
+  // Throws on a stale/mismatched hash — e.g. the report was mutated after
+  // buildReport sealed it, or the "artifact" was forged via an unsafe cast
+  // with a hash that doesn't match its own content.
+  const report = openReportArtifact(reports.machineReport);
+
+  const reportCheck = validateReport(report);
   if (!reportCheck.ok) {
     throw new Error(`attachReports: machineReport failed contract validation: ${reportCheck.error}`);
   }

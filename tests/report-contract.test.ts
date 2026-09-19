@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReport, verifyReportIntegrity } from "../src/report/build-report.ts";
+import { buildReport, openReportArtifact, verifyReportIntegrity } from "../src/report/build-report.ts";
 import { validateReport } from "../src/contracts/report-validation.ts";
 import { REPORT_SCHEMA_VERSION } from "../src/contracts/report-types.ts";
 import type { ReportV1 } from "../src/contracts/report-types.ts";
@@ -52,16 +52,18 @@ function cleanOutcome(caseId: string): CaseOutcome {
 }
 
 function buildFixtureReport() {
-  return buildReport({
-    runId: "run_test_1",
-    createdAt: "2026-01-01T00:00:00Z",
-    harnessVersion: "0.1.0",
-    toolVersions: { harness: "0.1.0" },
-    cases: [
-      { category: "unsafe_tool_use", outcome: outcomeWithHardFail("case_a") },
-      { category: "prompt_injection", outcome: cleanOutcome("case_b") },
-    ],
-  });
+  return openReportArtifact(
+    buildReport({
+      runId: "run_test_1",
+      createdAt: "2026-01-01T00:00:00Z",
+      harnessVersion: "0.1.0",
+      toolVersions: { harness: "0.1.0" },
+      cases: [
+        { category: "unsafe_tool_use", outcome: outcomeWithHardFail("case_a") },
+        { category: "prompt_injection", outcome: cleanOutcome("case_b") },
+      ],
+    }),
+  );
 }
 
 describe("report.json contract", () => {

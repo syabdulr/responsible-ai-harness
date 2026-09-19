@@ -1,14 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { redactString, redactValue } from "../src/contracts/validation.ts";
 import { buildEvidenceBundle, attachReports } from "../src/evidence/bundle.ts";
-import { buildReport } from "../src/report/build-report.ts";
+import { buildReport, openReportArtifact } from "../src/report/build-report.ts";
+import type { ValidatedReportArtifact } from "../src/report/build-report.ts";
+import { sha256 } from "../src/normalizer/normalize.ts";
 import { assessCase } from "../src/pipeline/assess.ts";
 import { DEMO_POLICY } from "../src/fixtures/cases.ts";
 import type { JudgePlugin } from "../src/judges/stub.ts";
+import type { ReportV1 } from "../src/contracts/report-types.ts";
 import type { CanonicalEvent, JudgeResult, ReviewTask, RuleResult, Finding } from "../src/contracts/types.ts";
+
+/**
+ * Forges a `ValidatedReportArtifact` around arbitrary (possibly dirty)
+ * report content with a SELF-CONSISTENT integrity hash — i.e. it passes
+ * `openReportArtifact`'s re-verification, because the hash genuinely
+ * matches the content, even though that content never went through
+ * `buildReport`'s redaction. This is only reachable through the `as
+ * unknown as` cast below; it exists to prove attachReports's OTHER
+ * layers (shape validation, residual-risk scan) are real backstops, not
+ * just integrity-hash theater.
+ */
+function forgeArtifact(report: Omit<ReportV1, "integrity">): ValidatedReportArtifact {
+  const blank = { ...report, integrity: { algorithm: "sha256" as const, reportSha256: "" } };
+  const reportSha256 = sha256(JSON.stringify(blank));
+  const full: ReportV1 = { ...report, integrity: { algorithm: "sha256", reportSha256 } };
+  return { report: full } as unknown as ValidatedReportArtifact;
+}
 
 const SECRET = "sk-CANARYSECRET1234567890AB";
 const CANARY = "CANARY_LEAK_XYZ987";
@@ -107,7 +127,7 @@ describe("redaction — every export surface", () => {
     assertClean("reviews.json note", String(reviewsJson[0]?.note ?? ""));
   });
 
-  it("attachReports rejects a machineReport that fails contract validation, refusing to write it", () => {
+  it("attachReports rejects a machineReport whose integrity hash does not match its content (bogus/garbage cast)", () => {
     const dir = mkdtempSync(join(tmpdir(), "rai-badreport-"));
     const { manifest } = buildEvidenceBundle({
       runId: "run_bad", toolVersions: {}, harnessVersion: "0.1.0",
@@ -116,10 +136,27 @@ describe("redaction — every export surface", () => {
       outDir: dir,
     });
     const bogus = { not: "a real report" } as unknown as Parameters<typeof attachReports>[2]["machineReport"];
-    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: bogus })).toThrow(/contract validation/);
+    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: bogus })).toThrow(/integrity hash/);
   });
 
-  it("attachReports refuses a shape-valid machineReport that still carries a secret in a free-text field (residual-risk backstop)", () => {
+  it("attachReports rejects a machineReport that is integrity-valid but fails contract shape validation (structurally valid forgery, layer 2)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rai-shapebad-"));
+    const { manifest } = buildEvidenceBundle({
+      runId: "run_shapebad", toolVersions: {}, harnessVersion: "0.1.0",
+      events: [], findings: [], reviewTasks: [], ruleResults: [], judgeResults: [],
+      reproduction: [],
+      outDir: dir,
+    });
+    // A forged artifact with a genuinely self-consistent hash (computed the
+    // same way buildReport does) but content that never went through the
+    // real builder — this is only reachable via the unsafe cast in
+    // forgeArtifact, and proves the integrity check alone is not what
+    // rejects a bad shape: validateReport is a real second layer.
+    const forged = forgeArtifact({ notARealReportField: true } as unknown as Omit<ReportV1, "integrity">);
+    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: forged })).toThrow(/contract validation/);
+  });
+
+  it("attachReports refuses a structurally valid, integrity-consistent machineReport that still carries a secret (residual-risk backstop, layer 3)", () => {
     const dir = mkdtempSync(join(tmpdir(), "rai-hand-built-report-"));
     const { manifest } = buildEvidenceBundle({
       runId: "run_hb", toolVersions: {}, harnessVersion: "0.1.0",
@@ -128,13 +165,49 @@ describe("redaction — every export surface", () => {
       outDir: dir,
     });
     // Simulates a future/alternate producer that bypasses buildReport's own
-    // redaction — shape-valid per validateReport, but content is dirty.
-    const handBuilt = buildReport({
-      runId: "run_hb", createdAt: "2026-01-01T00:00:00.000Z", harnessVersion: "0.1.0", toolVersions: {},
-      cases: [],
+    // redaction entirely, but still (correctly) computes a matching hash
+    // over its dirty content — shape-valid, integrity-valid, still dirty.
+    const cleanReport = openReportArtifact(buildReport({ runId: "run_hb", createdAt: "2026-01-01T00:00:00.000Z", harnessVersion: "0.1.0", toolVersions: {}, cases: [] }));
+    const { integrity, ...withoutIntegrity } = cleanReport;
+    void integrity;
+    const dirty: Omit<ReportV1, "integrity"> = {
+      ...withoutIntegrity,
+      recommendations: [{ ...withoutIntegrity.recommendations[0], recommendationId: withoutIntegrity.recommendations[0]?.recommendationId ?? "rec_x", policyVersion: "1.0.0", scope: "run", action: "no_action", severity: "none", reasonCodes: ["token=zzz-should-never-reach-disk-1234567890"], evidenceRefs: [] }],
+    };
+    const forged = forgeArtifact(dirty);
+    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: forged })).toThrow(/high-risk patterns/);
+  });
+
+  it("PII regression: mutating runId to an email address after construction is rejected, never written, and any surviving report.json still verifies", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rai-pii-runid-"));
+    const { manifest } = buildEvidenceBundle({
+      runId: "run_pii", toolVersions: {}, harnessVersion: "0.1.0",
+      events: [], findings: [], reviewTasks: [], ruleResults: [], judgeResults: [],
+      reproduction: [],
+      outDir: dir,
     });
-    const dirty = { ...handBuilt, recommendations: [{ ...handBuilt.recommendations[0], reasonCodes: ["token=zzz-should-never-reach-disk-1234567890"] }] } as typeof handBuilt;
-    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: dirty })).toThrow(/high-risk patterns/);
+    const artifact = buildReport({ runId: "run_pii", createdAt: "2026-01-01T00:00:00.000Z", harnessVersion: "0.1.0", toolVersions: {}, cases: [] });
+    // Simulate a bug or attacker mutating the sealed artifact's inner
+    // report after buildReport returned it — TS `readonly` does not stop
+    // this at runtime, which is exactly why attachReports re-verifies.
+    (artifact.report as { runId: string }).runId = "victim@example.com";
+
+    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: artifact })).toThrow(/integrity hash/);
+
+    // Nothing from this call was written: report.json/report.txt must not
+    // exist, so there is no possibility of the email having reached disk.
+    expect(existsSync(join(dir, "report.json"))).toBe(false);
+    expect(existsSync(join(dir, "report.txt"))).toBe(false);
+
+    // A genuinely unmutated build for the same run DOES write successfully,
+    // never contains the email, and its on-disk reportSha256 verifies.
+    const cleanArtifact = buildReport({ runId: "run_pii", createdAt: "2026-01-01T00:00:00.000Z", harnessVersion: "0.1.0", toolVersions: {}, cases: [] });
+    attachReports(dir, manifest, { humanText: "clean", machineReport: cleanArtifact });
+    const writtenRaw = readFileSync(join(dir, "report.json"), "utf8");
+    expect(writtenRaw).not.toContain("victim@example.com");
+    const written = JSON.parse(writtenRaw) as ReportV1;
+    const blank = { ...written, integrity: { algorithm: "sha256" as const, reportSha256: "" } };
+    expect(sha256(JSON.stringify(blank))).toBe(written.integrity.reportSha256);
   });
 
   it("redaction happens BEFORE the judge sees anything (judge input is clean)", async () => {
