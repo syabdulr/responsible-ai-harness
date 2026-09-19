@@ -3,7 +3,12 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildEvidenceBundle, attachReports, verifyBundle } from "../src/evidence/bundle.ts";
+import { buildReport } from "../src/report/build-report.ts";
 import type { CanonicalEvent, EvidenceBundleManifest } from "../src/contracts/types.ts";
+
+function emptyReport() {
+  return buildReport({ runId: "run_b", createdAt: "2026-01-01T00:00:00.000Z", harnessVersion: "0.1.0", toolVersions: {}, cases: [] });
+}
 
 function ev(): CanonicalEvent {
   return {
@@ -146,11 +151,24 @@ describe("bundle integrity attacks", () => {
   it("detects a tampered attached report (report.txt / report.json)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "rai-rep-"));
     const { manifest } = build(dir);
-    attachReports(dir, manifest, { humanText: "REPORT clean", machineJson: "{}" });
+    attachReports(dir, manifest, { humanText: "REPORT clean", machineReport: emptyReport() });
     writeFileSync(join(dir, "report.txt"), "REPORT fabricated findings: all pass");
     const v = await verifyBundle(dir);
     expect(v.ok).toBe(false);
     expect(v.failures.join(" ")).toMatch(/report\.txt/);
+  });
+
+  it("detects a tampered attached report.json (integrity + checksum both catch it)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rai-repjson-"));
+    const { manifest } = build(dir);
+    const finalManifest = attachReports(dir, manifest, { humanText: "REPORT clean", machineReport: emptyReport() });
+    expect(finalManifest.entries.some((e) => e.path === "report.json")).toBe(true);
+    const tamperedReport = JSON.parse(readFileSync(join(dir, "report.json"), "utf8")) as { riskScore: number };
+    tamperedReport.riskScore = 0.999;
+    writeFileSync(join(dir, "report.json"), JSON.stringify(tamperedReport, null, 2));
+    const v = await verifyBundle(dir);
+    expect(v.ok).toBe(false);
+    expect(v.failures.join(" ")).toMatch(/report\.json: checksum mismatch/);
   });
 
   it("detects a deleted artifact referenced by the manifest", async () => {

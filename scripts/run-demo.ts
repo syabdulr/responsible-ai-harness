@@ -24,6 +24,8 @@ import { canaryLeakageRule } from "../src/rules/hr-canary.ts";
 import { irreversibleToolAuthRule, instructionHierarchyRule, policyBypassRule } from "../src/rules/hr-rules.ts";
 import { StubJudge } from "../src/judges/stub.ts";
 import { JevJudge } from "../src/judges/jev.ts";
+import { JEV_QUESTION_CATALOG_VERSION } from "../src/judges/jev-questions.ts";
+import { JEV_THRESHOLD_POLICY_VERSION } from "../src/judges/jev-threshold-policy.ts";
 import { buildEvidenceBundle, attachReports, verifyBundle } from "../src/evidence/bundle.ts";
 import { buildReport } from "../src/report/build-report.ts";
 import { validateReport } from "../src/contracts/report-validation.ts";
@@ -182,19 +184,18 @@ async function main(): Promise<void> {
     runId,
     createdAt: new Date().toISOString(),
     harnessVersion: "0.1.0",
-    toolVersions: { harness: "0.1.0", stubJudge: "1.0.0", jevQuestionCatalog: "1.0.0", jevThresholdPolicy: "1.0.0", policy: DEMO_POLICY.version },
+    toolVersions: { harness: "0.1.0", stubJudge: "1.0.0", jevQuestionCatalog: JEV_QUESTION_CATALOG_VERSION, jevThresholdPolicy: JEV_THRESHOLD_POLICY_VERSION, policy: DEMO_POLICY.version },
     cases: outcomes.map(({ case: c, outcome }) => ({ category: c.category, outcome })),
   });
   const reportCheck = validateReport(report);
   if (!reportCheck.ok) throw new Error(`report.json failed contract validation: ${reportCheck.error}`);
   console.log(`[5b] report.json: schema ${report.reportSchemaVersion}, riskScore ${String(report.riskScore)}, recommendations ${String(report.recommendations.length)}`);
-  const reportJson = JSON.stringify(report, null, 2);
   // reproduction.txt is written through the manifest-aware path so it is
   // checksummed like every other artifact (no orphan files in the bundle).
   const reproText = redactString(reproduction.join("\n"));
   const finalManifest = attachReports(outDir, manifest, {
     humanText: redactString(reportText),
-    machineJson: reportJson,
+    machineReport: report,
     reproductionText: reproText,
   });
   console.log(`[6] reports + reproduction attached to manifest (all checksummed, ${String(finalManifest.entries.length)} entries)`);

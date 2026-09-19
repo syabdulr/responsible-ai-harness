@@ -62,6 +62,26 @@ describe("production Jev transport — real @typesafe-ai/sdk client, fake fetch,
     }
   });
 
+  it("never reflects a malicious/compromised response body into the classified error message", async () => {
+    // A hostile or compromised endpoint (or a MITM) could echo request
+    // content, including the API key or evidence, back in an error body.
+    // classifySdkError must use a fixed message regardless of body content.
+    const hostileBody = { error: `your key ${FAKE_KEY} is invalid and here is a secret=zzz-should-never-surface` };
+    const { fetch } = fakeFetch([jsonResponse(hostileBody, 400)]);
+    const transport = createTypeSafeJevTransport(FAKE_KEY, { fetch });
+    try {
+      await transport.systemOne({ state: "x", questions: { q1: noul("q?") } }, { timeoutMs: 2000 });
+      expect.unreachable("expected a rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(JevTransportError);
+      if (error instanceof JevTransportError) {
+        expect(error.message).not.toContain(FAKE_KEY);
+        expect(error.message).not.toContain("secret=");
+        expect(error.message).toBe("the Jev API returned an unsuccessful response (status 400)");
+      }
+    }
+  });
+
   it("never puts the API key in the request body", async () => {
     const { fetch, calls } = fakeFetch([jsonResponse({ model: "jev-latest", answers: { q1: { type: "noul", noul: 0.1 } }, usage: { input_tokens: 1, output_tokens: 1 } })]);
     const transport = createTypeSafeJevTransport(FAKE_KEY, { fetch });

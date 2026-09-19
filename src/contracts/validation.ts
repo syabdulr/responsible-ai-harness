@@ -74,6 +74,39 @@ export function requireNumber(v: unknown, field: string, min?: number, max?: num
   return ok(v);
 }
 
+export function requireInteger(v: unknown, field: string, min?: number, max?: number): Valid<number> {
+  const n = requireNumber(v, field, min, max);
+  if (!n.ok) return n;
+  if (!Number.isInteger(n.value)) return err(`${field} must be an integer`);
+  return n;
+}
+
+export function requireStringArray(v: unknown, field: string): Valid<string[]> {
+  const arr = requireArray(v, field);
+  if (!arr.ok) return arr;
+  const out: string[] = [];
+  for (const [i, item] of arr.value.entries()) {
+    const s = requireString(item, `${field}[${String(i)}]`);
+    if (!s.ok) return s;
+    out.push(s.value);
+  }
+  return ok(out);
+}
+
+/**
+ * Reject any key on `input` not in `allowed`. Unlike the tolerant
+ * unknown-field policy for externally-produced payloads (canonical
+ * events, JSONL traces — see the module doc comment), report.json is a
+ * harness-emitted, harness-consumed contract with no third-party
+ * producers to stay forward-compatible with, so it is validated strictly.
+ */
+export function requireNoUnknownKeys(input: Record<string, unknown>, allowed: readonly string[], field: string): Valid<null> {
+  for (const key of Object.keys(input)) {
+    if (!allowed.includes(key)) return err(`${field}: unknown field "${key}"`);
+  }
+  return ok(null);
+}
+
 function requireBoolean(v: unknown, field: string): Valid<boolean> {
   if (typeof v !== "boolean") return err(`${field} must be a boolean`);
   return ok(v);
@@ -425,19 +458,37 @@ export function validateBundleManifest(input: unknown): Valid<EvidenceBundleMani
 /**
  * Redaction: recursively remove values matching secret/canary patterns.
  * Used before judge calls, logging, and human-readable exports.
+ *
+ * This is DEFENSE IN DEPTH, not a guarantee. Pattern matching cannot catch
+ * every secret format, transformed/encoded secret, or free-form name or
+ * address. `findResidualRiskIndicators` below adds a second, paranoid pass
+ * over ALREADY-redacted content that a live evaluation call must consult
+ * and fail closed on — it does not certify the content is safe, only that
+ * no known high-risk shape survived.
  */
 const REDACTION_PATTERNS: { name: string; re: RegExp }[] = [
+  { name: "pem_private_key", re: /-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z]*PRIVATE KEY-----/g },
+  { name: "jwt", re: /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
+  { name: "bearer_token", re: /\bBearer\s+[A-Za-z0-9._~+/=-]{10,}\b/gi },
   { name: "credit_card", re: /\b(?:\d[ -]?){13,16}\b/g },
   { name: "ssn", re: /\b\d{3}-\d{2}-\d{4}\b/g },
+  { name: "phone", re: /\b(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b/g },
   { name: "email", re: /\b[\w.+-]+@[\w-]+\.[\w.]+\b/g },
-  { name: "api_key", re: /\b(?:sk-|ghp_|AKIA)[A-Za-z0-9_-]{10,}\b/g },
+  {
+    // Common vendor API-key formats: GitHub (all ghp_/gho_/ghs_/ghu_/ghr_/
+    // github_pat_ prefixes + classic sk-/AWS AKIA/ASIA + Stripe/Slack/
+    // Google/SendGrid/Shopify), plus the original sk-/ghp_/AKIA set.
+    name: "api_key",
+    re: /\b(?:sk-(?:proj-|live-|test-)?|sk_live_|sk_test_|pk_live_|pk_test_|rk_live_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|AKIA|ASIA|AIza|xox[baprs]-[A-Za-z0-9-]+|SG\.[A-Za-z0-9_-]+|shpat_|shpss_|shpca_)[A-Za-z0-9_.-]{8,}\b/g,
+  },
+  { name: "account_id", re: /\b(?:acct|account|acc)[_-]?(?:id|no|number)?\s*[:=]\s*["']?[A-Za-z0-9-]{6,}["']?/gi },
   { name: "canary", re: /\bCANARY[A-Z0-9_]*\b/g },
 ];
 
 export function redactString(s: string, applied: string[] = []): string {
   let out = s;
   for (const p of REDACTION_PATTERNS) {
-    if (p.re.test(s)) {
+    if (p.re.test(out)) {
       p.re.lastIndex = 0;
       applied.push(p.name);
       out = out.replace(p.re, `[redacted:${p.name}]`);
@@ -457,4 +508,41 @@ export function redactValue(value: unknown, applied: string[] = []): unknown {
     return out;
   }
   return value;
+}
+
+/**
+ * Second-pass, paranoid residual-risk scan over content that has ALREADY
+ * been through `redactValue`. Broader and intentionally higher false
+ * positive than `REDACTION_PATTERNS`: generic high-entropy blobs and
+ * "key: value"-shaped secret assignments that a live judge call must
+ * refuse to send rather than silently forward. Returns the matched
+ * indicator names; an empty array means none were found (not a
+ * certification of safety — see module doc comment above).
+ */
+const RESIDUAL_RISK_PATTERNS: { name: string; re: RegExp }[] = [
+  { name: "residual_secret_assignment", re: /\b(?:password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret)\b\s*[:=]\s*["']?[^\s"']{6,}/gi },
+  { name: "residual_pem_marker", re: /-----BEGIN[ A-Z]*(?:PRIVATE KEY|CERTIFICATE)-----/g },
+  { name: "residual_high_entropy_hex", re: /\b[0-9a-fA-F]{32,}\b/g },
+  { name: "residual_high_entropy_base64", re: /\b(?:[A-Za-z0-9+/]{4}){10,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?\b/g },
+];
+
+function scanResidualRisk(s: string): string[] {
+  const found: string[] = [];
+  for (const p of RESIDUAL_RISK_PATTERNS) {
+    if (p.re.test(s)) found.push(p.name);
+    p.re.lastIndex = 0;
+  }
+  return found;
+}
+
+/** Recursively scan an already-redacted structure for residual high-risk indicators. */
+export function findResidualRiskIndicators(value: unknown, found: Set<string> = new Set()): string[] {
+  if (typeof value === "string") {
+    for (const name of scanResidualRisk(value)) found.add(name);
+  } else if (Array.isArray(value)) {
+    for (const v of value) findResidualRiskIndicators(v, found);
+  } else if (isRecord(value)) {
+    for (const v of Object.values(value)) findResidualRiskIndicators(v, found);
+  }
+  return [...found];
 }

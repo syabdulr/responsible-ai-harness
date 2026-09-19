@@ -5,6 +5,7 @@ import { CATEGORY_QUESTION_IDS, JEV_QUESTION_CATALOG_VERSION, questionsForCatego
 import { JEV_THRESHOLD_POLICY_VERSION, evaluateThresholdPolicy } from "./jev-threshold-policy.ts";
 import { JEV_TRANSPORT_VERSION, JevTransportError } from "./jev-transport.ts";
 import type { JevClient } from "./jev-transport.ts";
+import { findResidualRiskIndicators, isRecord, redactValue } from "../contracts/validation.ts";
 
 /**
  * Jev judge adapter — LIVE MODE DISABLED BY DEFAULT, FAILS CLOSED.
@@ -25,6 +26,17 @@ import type { JevClient } from "./jev-transport.ts";
  * process memory for the duration of the SDK call — that is unavoidable
  * for any in-process SDK — but nothing in this codebase reads, prints, or
  * persists it outside that call.
+ *
+ * Outbound data boundary: the pipeline already redacts evidence before
+ * calling any judge (see `pipeline/assess.ts`), but this is the last line
+ * before data leaves the process, so `score()` redacts again and then
+ * runs a second, paranoid `findResidualRiskIndicators` pass — defense in
+ * depth, not a guarantee (see `validation.ts`'s doc comment on both).
+ * A live call is refused (fails closed to `uncertain`) if anything
+ * high-risk survives. The wire payload is also an allowlisted, fixed
+ * shape (`{category, caseId, evidence}`) rather than a free-form dump of
+ * `input.events` — only whatever the caller explicitly put in `evidence`
+ * is ever sent.
  */
 
 export interface JevConfig {
@@ -76,11 +88,24 @@ export class JevJudge implements JudgePlugin {
     let client: JevClient;
     try {
       client = this.clientFactory(apiKey);
-    } catch (error) {
-      return { ok: false, error: { code: "jev_client_construction_failed", message: describeError(error), timeout: false } };
+    } catch {
+      return { ok: false, error: { code: "jev_client_construction_failed", message: "failed to construct the Jev transport client", timeout: false } };
     }
 
-    const state = { evidence: input.evidence, events: input.events } as unknown as EntryType;
+    // Allowlisted, fixed-shape payload — never a free-form dump of
+    // input.events. `evidence` is whatever the caller curated; wrap
+    // non-record evidence so the wire shape stays a fixed record either way.
+    const evidenceRecord: Record<string, unknown> = isRecord(input.evidence) ? input.evidence : { value: input.evidence };
+    const allowlistedState = { category, caseId: input.caseId, evidence: evidenceRecord };
+    // Redact again (defense in depth) and refuse to send if anything
+    // high-risk still survives — see the class doc comment.
+    const redactedState = redactValue(allowlistedState) as typeof allowlistedState;
+    const residual = findResidualRiskIndicators(redactedState);
+    if (residual.length > 0) {
+      return { ok: false, error: { code: "jev_residual_risk_detected", message: "redacted evidence still matches high-risk patterns; refusing to send to Jev", timeout: false } };
+    }
+    const state = redactedState as unknown as EntryType;
+
     let transportResult;
     try {
       transportResult = await client.systemOne(
@@ -91,7 +116,7 @@ export class JevJudge implements JudgePlugin {
       if (error instanceof JevTransportError) {
         return { ok: false, error: { code: error.code, message: error.message, timeout: error.timeout } };
       }
-      return { ok: false, error: { code: "jev_transport_unknown_error", message: describeError(error), timeout: false } };
+      return { ok: false, error: { code: "jev_transport_unknown_error", message: "the Jev transport failed in an unrecognized way", timeout: false } };
     }
 
     const verdict = evaluateThresholdPolicy(transportResult.answers, questionIds);
@@ -127,9 +152,4 @@ export class JevJudge implements JudgePlugin {
       },
     };
   }
-}
-
-/** Safe, non-sensitive error description — never includes secret material. */
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : "unknown error";
 }

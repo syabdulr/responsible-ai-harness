@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { redactString, redactValue } from "../src/contracts/validation.ts";
 import { buildEvidenceBundle, attachReports } from "../src/evidence/bundle.ts";
+import { buildReport } from "../src/report/build-report.ts";
 import { assessCase } from "../src/pipeline/assess.ts";
 import { DEMO_POLICY } from "../src/fixtures/cases.ts";
 import type { JudgePlugin } from "../src/judges/stub.ts";
@@ -82,17 +83,58 @@ describe("redaction — every export surface", () => {
       reproduction: [`repro step containing ${CANARY}`],
       outDir: dir,
     });
+    // The machine report can ONLY be a ReportV1 built by buildReport — it
+    // redacts internally, so the sentinels here exercise that path rather
+    // than a caller-assembled JSON blob attachReports must trust blindly.
+    const report = buildReport({
+      runId: "run_r", createdAt: "2026-01-01T00:00:00.000Z", harnessVersion: "0.1.0", toolVersions: {},
+      cases: [{ category: "secret_pii_leakage", outcome: { caseId: "c", events: [ev], ruleResults: [rule], judgeResult: judge, judgeError: undefined, finding, review } }],
+    });
     const textReport = `REPORT\nleaked: ${SECRET}\ncanary: ${CANARY}\n`;
-    const jsonReport = JSON.stringify({ verdict: `bad ${SECRET}`, canary: CANARY });
-    attachReports(dir, manifest, { humanText: textReport, machineJson: jsonReport });
+    const finalManifest = attachReports(dir, manifest, { humanText: textReport, machineReport: report });
 
-    for (const e of manifest.entries) {
+    // Regression guard: inspect the RETURNED (post-attach) manifest and the
+    // actual files it points at — the stale pre-attach `manifest` above
+    // would silently miss report.txt/report.json entirely.
+    expect(finalManifest.entries.some((e) => e.path === "report.txt")).toBe(true);
+    expect(finalManifest.entries.some((e) => e.path === "report.json")).toBe(true);
+    for (const e of finalManifest.entries) {
       const content = readFileSync(join(dir, e.path), "utf8");
       assertClean(`bundle:${e.path}`, content);
     }
     // note field carried sensitive content and must be redacted too
     const reviewsJson = JSON.parse(readFileSync(join(dir, "reviews.json"), "utf8")) as Array<{ note?: string }>;
     assertClean("reviews.json note", String(reviewsJson[0]?.note ?? ""));
+  });
+
+  it("attachReports rejects a machineReport that fails contract validation, refusing to write it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rai-badreport-"));
+    const { manifest } = buildEvidenceBundle({
+      runId: "run_bad", toolVersions: {}, harnessVersion: "0.1.0",
+      events: [], findings: [], reviewTasks: [], ruleResults: [], judgeResults: [],
+      reproduction: [],
+      outDir: dir,
+    });
+    const bogus = { not: "a real report" } as unknown as Parameters<typeof attachReports>[2]["machineReport"];
+    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: bogus })).toThrow(/contract validation/);
+  });
+
+  it("attachReports refuses a shape-valid machineReport that still carries a secret in a free-text field (residual-risk backstop)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rai-hand-built-report-"));
+    const { manifest } = buildEvidenceBundle({
+      runId: "run_hb", toolVersions: {}, harnessVersion: "0.1.0",
+      events: [], findings: [], reviewTasks: [], ruleResults: [], judgeResults: [],
+      reproduction: [],
+      outDir: dir,
+    });
+    // Simulates a future/alternate producer that bypasses buildReport's own
+    // redaction — shape-valid per validateReport, but content is dirty.
+    const handBuilt = buildReport({
+      runId: "run_hb", createdAt: "2026-01-01T00:00:00.000Z", harnessVersion: "0.1.0", toolVersions: {},
+      cases: [],
+    });
+    const dirty = { ...handBuilt, recommendations: [{ ...handBuilt.recommendations[0], reasonCodes: ["token=zzz-should-never-reach-disk-1234567890"] }] } as typeof handBuilt;
+    expect(() => attachReports(dir, manifest, { humanText: "clean", machineReport: dirty })).toThrow(/high-risk patterns/);
   });
 
   it("redaction happens BEFORE the judge sees anything (judge input is clean)", async () => {

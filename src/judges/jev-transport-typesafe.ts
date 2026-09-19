@@ -21,22 +21,33 @@ import type { Fetch } from "@typesafe-ai/sdk";
 import { JevTransportError } from "./jev-transport.ts";
 import type { JevClient, JevTransportCallOptions, JevTransportRequest, JevTransportResult } from "./jev-transport.ts";
 
-/** Classify an SDK exception into a normalized, non-sensitive transport error. */
+/**
+ * Classify an SDK exception into a normalized transport error.
+ *
+ * The message is ALWAYS one of the fixed strings below — never
+ * `error.message` or any other text from the exception. An `APIError`'s
+ * body/message originates from the HTTP response, which is untrusted
+ * network content (could be a compromised endpoint, a MITM, or a
+ * misconfigured proxy) and could reflect back request content, including
+ * secrets or the evidence we just sent; it must never be forwarded into a
+ * `JudgeResult`, a finding, a report, or a log. Only the numeric HTTP
+ * status code (not the body) is safe to fold into the error `code`.
+ */
 function classifySdkError(error: unknown): JevTransportError {
   if (error instanceof APITimeoutError) {
-    return new JevTransportError("jev_transport_timeout", error.message, true);
+    return new JevTransportError("jev_transport_timeout", "the Jev API call did not complete within the configured timeout", true);
   }
   if (error instanceof APIConnectionError) {
-    return new JevTransportError("jev_transport_connection_error", error.message, false);
+    return new JevTransportError("jev_transport_connection_error", "could not connect to the Jev API", false);
   }
   if (error instanceof APIError) {
-    return new JevTransportError(`jev_transport_api_error_${String(error.status)}`, error.message, false);
+    const status = Number.isInteger(error.status) ? error.status : 0;
+    return new JevTransportError(`jev_transport_api_error_${String(status)}`, `the Jev API returned an unsuccessful response (status ${String(status)})`, false);
   }
   if (error instanceof TypeSafeError) {
-    return new JevTransportError("jev_transport_sdk_error", error.message, false);
+    return new JevTransportError("jev_transport_sdk_error", "the Jev SDK reported a client-side error", false);
   }
-  const message = error instanceof Error ? error.message : "unknown transport failure";
-  return new JevTransportError("jev_transport_unknown_error", message, false);
+  return new JevTransportError("jev_transport_unknown_error", "the Jev transport failed in an unrecognized way", false);
 }
 
 export interface TypeSafeJevTransportOptions {
