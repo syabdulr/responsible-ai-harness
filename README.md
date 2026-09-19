@@ -9,12 +9,20 @@ A model-agnostic, Jev-first assessment harness for testing AI models and agents 
 Requires Node.js 22+.
 
 ```bash
-npm install        # install dependencies (TypeScript, vitest, eslint, tsx)
+npm ci             # reproducible install from package-lock.json (dev deps only)
 npm run check      # typecheck + lint + full test suite (one command)
-npm run demo       # network-free end-to-end demo -> ./evidence-out/
+npm run demo       # end-to-end demo via the REST adapter -> ./evidence-out/
 ```
 
-The demo validates a capability manifest, runs four deterministic fixture cases through the local synthetic target (document.read + message.send into a fake sink), applies hard rules before the StubJudge, and writes a checksummed evidence bundle plus redacted human-readable and machine-readable reports to `evidence-out/` (gitignored, safe to delete). The sandbox guard blocks unauthorized irreversible tool calls before delivery; Jev live mode is disabled by default and fails closed.
+The demo validates a capability manifest, starts a local synthetic HTTP target (`document.read` + `message.send` into a fake sink), and drives it **through the universal REST adapter** over real HTTP on loopback (explicit `allowLoopback` opt-in; production use is https + allowlisted public hosts). Four deterministic fixture cases pass through hard rules before the StubJudge — every judge-bound payload is redacted first — and the run writes a checksummed evidence bundle plus redacted human- and machine-readable reports to `evidence-out/` (gitignored, safe to delete). The guarded executor blocks unauthorized irreversible tool calls before delivery: authorization comes only from harness-minted grants, never from target-supplied `policy.decision` events. Jev live mode is disabled by default and fails closed.
+
+### Trusted authorization model (sandbox guard)
+
+Irreversible tools (e.g. `message.send`) execute only when the harness itself minted a grant for that exact call. A grant binds: run ID, case ID, exact tool-call event ID, tool name, canonical SHA-256 of normalized arguments, recipient/scope, trusted actor, and expiry, and is single-use. The target's own `policy.decision` events are untrusted input: a forged, stale, mismatched, or replayed decision can never cause delivery (see `tests/authorization.test.ts`).
+
+## Judge status: live Jev scoring is NOT implemented
+
+The Jev `JudgePlugin` adapter is a fail-closed stub. Live mode is off by default; enabling it without a secret provider returns `jev_secret_unavailable`, and the adapter never requests, reads, prints, stores, or commits a Jev key. All tests and the demo use the deterministic `StubJudge`. No network is used. Deterministic hard rules always run first and cannot be overridden by any judge.
 
 ## Product principles
 
@@ -380,7 +388,7 @@ Reviewer decisions are append-only, attributed, timestamped, and never used as t
 
 ## Evidence bundle
 
-Each run exports a signed manifest plus referenced artifacts:
+Each run exports a checksummed manifest plus referenced artifacts. **Signing is not implemented** — it is deferred to a later milestone; `manifest.json` carries sha256 checksums and an `entriesDigest` binding the entry list, which `verifyBundle` re-validates offline (schema, digest, duplicate paths, path containment, byte counts, per-artifact checksums):
 
 ```text
 evidence-bundle/
@@ -402,6 +410,10 @@ evidence-bundle/
 ```
 
 The manifest records schema versions, tool and plugin versions, hashes, timestamps, environment metadata, and redaction state. Bundles must be verifiable offline.
+
+### Reproducing a bundle
+
+Every bundle carries `reproduction.json` with self-contained steps: clone the repo, `npm ci`, `npm run demo` regenerates a deterministic bundle from the committed fixtures, and the manifest checksums let anyone verify integrity offline (`verifyBundle` in `src/evidence/bundle.ts`). No external services, keys, or network access are required.
 
 ## Security boundaries
 

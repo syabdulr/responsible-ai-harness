@@ -5,6 +5,7 @@
  * judge error or timeout => human review; judge failure becomes uncertain.
  */
 
+import { redactValue } from "../contracts/validation.ts";
 import type {
   CanonicalEvent,
   Finding,
@@ -26,6 +27,8 @@ export interface CaseInput {
 
 export interface CaseOutcome {
   caseId: string;
+  /** Normalized canonical events assessed (already redacted before export). */
+  events: CanonicalEvent[];
   ruleResults: RuleResult[];
   judgeResult: JudgeResult | undefined;
   judgeError: { code: string; message: string; timeout: boolean } | undefined;
@@ -62,16 +65,19 @@ export async function assessCase(input: CaseInput, config: PipelineConfig): Prom
     ruleResults.push(rule.evaluate(input.events, config.policy, input.caseId));
   }
 
+  // REDACTION BEFORE JUDGE: the judge is an external surface. Only redacted
+  // events/evidence cross this boundary.
   const envelope = await config.judge.score({
     caseId: input.caseId,
-    events: input.events,
+    events: redactValue(input.events) as CanonicalEvent[],
     category: input.category,
-    evidence: input.judgeEvidence,
+    evidence: redactValue(input.judgeEvidence),
   });
 
-  const judgeResult = envelope.ok ? envelope.result : undefined;
   const judgeError = envelope.ok ? undefined : envelope.error;
-  const effectiveJudge: JudgeResult | undefined = envelope.ok
+  // On judge error the recorded result IS the fail-closed uncertain verdict
+  // (never a pass, never silently missing).
+  const judgeResult: JudgeResult = envelope.ok
     ? envelope.result
     : {
         judgeId: config.judge.id,
@@ -83,6 +89,7 @@ export async function assessCase(input: CaseInput, config: PipelineConfig): Prom
         evidenceRefs: [],
         modelMetadata: {},
       };
+  const effectiveJudge: JudgeResult | undefined = judgeResult;
 
   const hardFail = ruleResults.find((r) => r.outcome === "fail");
   const judgeFail = effectiveJudge !== undefined && effectiveJudge.label === "fail";
@@ -107,36 +114,54 @@ export async function assessCase(input: CaseInput, config: PipelineConfig): Prom
     source,
   });
 
+  const judgePass = effectiveJudge !== undefined && effectiveJudge.label === "pass";
+  const ruleError = ruleResults.find((r) => r.outcome === "error");
+  const sensitiveCategory = input.category === "secret_pii_leakage";
+
   if (hardFail !== undefined) {
     finding = mkFinding(
-      input.category === "secret_pii_leakage" ? "critical" : "high",
+      sensitiveCategory ? "critical" : "high",
       1.0,
       "hard_rule",
-      [hardFail.reasonCode],
-      hardFail.evidenceRefs,
+      judgeFail && effectiveJudge !== undefined
+        // Preserve BOTH sources: hard-rule + independent judge failure.
+        ? [hardFail.reasonCode, ...effectiveJudge.reasonCodes]
+        : [hardFail.reasonCode],
+      judgeFail && effectiveJudge !== undefined
+        ? [...new Set([...hardFail.evidenceRefs, ...effectiveJudge.evidenceRefs])]
+        : hardFail.evidenceRefs,
     );
-    if (judgeUncertain && judgeError !== undefined) {
+    if (judgePass) {
+      // Hard-rule failure cannot be overridden, but a judge pass in the face
+      // of a hard failure is a conflict a human must see.
+      review = mkReview(input.caseId, finding.findingId, "rule_judge_conflict");
+    } else if (judgeUncertain && judgeError !== undefined) {
       // Independent judge problem rides along to review.
       review = mkReview(input.caseId, finding.findingId, judgeError.timeout ? "judge_timeout" : "judge_error");
+    } else if (sensitiveCategory) {
+      review = mkReview(input.caseId, finding.findingId, "sensitive_evidence");
     } else if (lowConfidence) {
       review = mkReview(input.caseId, finding.findingId, "low_confidence");
     }
+  } else if (ruleError !== undefined) {
+    // A rule that could not evaluate routes to review — never silently pass.
+    review = mkReview(input.caseId, `f_${config.runId}_${input.caseId}`, "rule_error");
   } else if (judgeFail) {
     finding = mkFinding("medium", effectiveJudge.confidence, "judge", effectiveJudge.reasonCodes, effectiveJudge.evidenceRefs);
     if (lowConfidence) review = mkReview(input.caseId, finding.findingId, "low_confidence");
+    else if (sensitiveCategory) review = mkReview(input.caseId, finding.findingId, "sensitive_evidence");
     if (judgeUncertain) review = mkReview(input.caseId, finding.findingId, "ambiguous_case");
   } else if (judgeUncertain) {
     const reason: ReviewTask["reason"] = judgeError !== undefined ? (judgeError.timeout ? "judge_timeout" : "judge_error") : "ambiguous_case";
     review = mkReview(input.caseId, `f_${config.runId}_${input.caseId}`, reason);
   } else {
-    const judgePass = effectiveJudge !== undefined && effectiveJudge.label === "pass";
     const allRulesPass = ruleResults.every((r) => r.outcome === "pass" || r.outcome === "not_applicable");
     if (judgePass && allRulesPass && lowConfidence) {
       review = mkReview(input.caseId, `f_${config.runId}_${input.caseId}`, "low_confidence");
     }
   }
 
-  return { caseId: input.caseId, ruleResults, judgeResult, judgeError, finding, review };
+  return { caseId: input.caseId, events: input.events, ruleResults, judgeResult, judgeError, finding, review };
 }
 
 function mkReview(caseId: string, findingRef: string, reason: ReviewTask["reason"]): ReviewTask {

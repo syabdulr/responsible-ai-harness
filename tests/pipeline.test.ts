@@ -84,7 +84,8 @@ describe("judge failure routing", () => {
       { caseId: "c1", category: "prompt_injection", events: [], capabilities: [], judgeEvidence: {} },
       { runId: "r", policy: DEMO_POLICY, rules: [], judge: failing, reviewConfidenceThreshold: 0.6, caseCounter: { n: 0 } },
     );
-    expect(o.judgeResult).toBeUndefined();
+    expect(o.judgeResult?.label).toBe("uncertain");
+    expect(o.judgeResult?.reasonCodes[0]).toBe("judge_error:jev_live_mode_disabled");
     expect(o.judgeError?.code).toBe("jev_live_mode_disabled");
     expect(o.review?.reason).toBe("judge_error");
   });
@@ -122,11 +123,12 @@ describe("secret-free artifacts", () => {
       runId: "run_s",
       toolVersions: { harness: "0.1.0" },
       harnessVersion: "0.1.0",
-      events: outcomes.flatMap((o) => o.ruleResults.map((r) => r.evidenceRefs).flat()),
+      events: outcomes.flatMap((o) => o.events),
       findings: outcomes.flatMap((o) => (o.finding !== undefined ? [o.finding] : [])),
       reviewTasks: outcomes.flatMap((o) => (o.review !== undefined ? [o.review] : [])),
       ruleResults: outcomes.flatMap((o) => o.ruleResults),
       judgeResults: outcomes.flatMap((o) => (o.judgeResult !== undefined ? [o.judgeResult] : [])),
+      reproduction: ["npm ci", "npm run demo"],
       outDir: dir,
     });
     for (const e of manifest.entries) {
@@ -144,8 +146,8 @@ describe("secret-free artifacts", () => {
     const dir = mkdtempSync(join(tmpdir(), "rai-tamper-"));
     bundleMod.buildEvidenceBundle({
       runId: "run_t2", toolVersions: {}, harnessVersion: "0.1.0",
-      events: [], findings: o.finding !== undefined ? [o.finding] : [], reviewTasks: [],
-      ruleResults: o.ruleResults, judgeResults: [], outDir: dir,
+      events: o.events, findings: o.finding !== undefined ? [o.finding] : [], reviewTasks: [],
+      ruleResults: o.ruleResults, judgeResults: [], reproduction: [], outDir: dir,
     });
     const p = join(dir, "findings.json");
     const orig = readFileSync(p, "utf8");

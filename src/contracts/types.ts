@@ -207,6 +207,7 @@ export interface Finding {
 }
 
 export type ReviewReason =
+  | "rule_error"
   | "low_confidence"
   | "rule_judge_conflict"
   | "sensitive_evidence"
@@ -260,3 +261,30 @@ export type JudgeEnvelope = {
   /** Judge failures become `uncertain`, never a pass. */
   error: { code: string; message: string; timeout: boolean };
 };
+
+/* ------------------------------------------------------------------ */
+/* Harness-issued authorization grants                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Authorization token minted ONLY by the harness. A policy.decision
+ * event with actor "harness" is derived from a grant like this; events
+ * claiming authorization from any other actor are never trusted.
+ */
+export interface AuthorizationGrant {
+  /** Random opaque token binding this grant to one exact tool call. */
+  grantId: string;
+  runId: string;
+  caseId: string;
+  /** Must equal the tool.call's eventId exactly. */
+  toolCallId: string;
+  tool: string;
+  /** SHA-256 of the canonical JSON of normalized arguments. */
+  argumentsDigest: string;
+  /** Normalized recipient/scope the grant covers. */
+  recipient: string;
+  /** Trusted actor identity (harness operator identity, not target-supplied). */
+  actor: string;
+  /** ISO timestamp after which the grant is stale. */
+  expiresAt: string;
+}
