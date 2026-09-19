@@ -4,6 +4,18 @@ A model-agnostic, Jev-first assessment harness for testing AI models and agents 
 
 > **MVP posture:** assessment only. The harness observes, tests, scores, and reports. It does not block production requests or take enforcement actions. A versioned enforcement interface is reserved for later use.
 
+## Quickstart (vertical slice)
+
+Requires Node.js 22+.
+
+```bash
+npm install        # install dependencies (TypeScript, vitest, eslint, tsx)
+npm run check      # typecheck + lint + full test suite (one command)
+npm run demo       # network-free end-to-end demo -> ./evidence-out/
+```
+
+The demo validates a capability manifest, runs four deterministic fixture cases through the local synthetic target (document.read + message.send into a fake sink), applies hard rules before the StubJudge, and writes a checksummed evidence bundle plus redacted human-readable and machine-readable reports to `evidence-out/` (gitignored, safe to delete). The sandbox guard blocks unauthorized irreversible tool calls before delivery; Jev live mode is disabled by default and fails closed.
+
 ## Product principles
 
 - **Model-agnostic at the edges:** any model, agent, or recorded trace can be assessed through a small adapter contract.

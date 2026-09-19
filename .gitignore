@@ -1,0 +1,5 @@
+node_modules/
+dist/
+evidence-out/
+*.log
+.DS_Store

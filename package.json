@@ -1,0 +1,28 @@
+{
+  "name": "responsible-ai-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Model-agnostic assessment harness for AI models and agents: deterministic hard rules before replaceable judges, evidence-first findings, offline-verifiable bundles.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "demo": "tsx scripts/run-demo.ts",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.4",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0",
+    "tsx": "^4.23.13",
+    "typescript": "5.7",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^3.2.7"
+  }
+}
