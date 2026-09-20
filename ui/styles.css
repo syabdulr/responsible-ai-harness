@@ -254,6 +254,46 @@ button {
   color: var(--violet);
 }
 
+/* ---------- source switch (offline / live) ---------- */
+
+.source-switch {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  gap: 2px;
+}
+
+.source-tab {
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--carbon);
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.source-tab[aria-selected="true"] {
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: var(--shadow-subtle);
+}
+
+.source-tab#source-tab-live[aria-selected="true"] {
+  color: var(--violet);
+}
+
+.eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
 /* ---------- buttons ---------- */
 
 .btn {
@@ -788,6 +828,53 @@ details[open] > .finding-summary .chev {
   gap: var(--space-3);
 }
 
+/* ---------- per-question Jev probabilities ---------- */
+
+.question-probs {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-2) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.question-probs li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 12px;
+}
+
+.question-probs .qid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--carbon);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.question-probs .qbar-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--violet-wash-soft);
+  overflow: hidden;
+}
+
+.question-probs .qbar-fill {
+  height: 100%;
+  background: var(--violet);
+  border-radius: var(--radius-pill);
+}
+
+.question-probs .qval {
+  font-weight: 500;
+  color: var(--ink);
+  flex: none;
+}
+
 /* ---------- integrity ---------- */
 
 .integrity-card {
@@ -1007,6 +1094,57 @@ details[open] > .finding-summary .chev {
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--ash);
+  }
+}
+
+/* ---------- print ---------- */
+
+@media print {
+  .topbar,
+  .mobile-export-bar,
+  .skip-link,
+  .toast,
+  #export-btn-top,
+  #export-btn-mobile,
+  #source-switch {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .shell {
+    max-width: none;
+    padding: 0;
+  }
+
+  .card,
+  .domain-card,
+  .rec-card,
+  .finding-row {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  /* Findings are <details> elements. app.js force-opens every one on the
+     browser's "beforeprint" event (the `open` attribute can't be set from
+     CSS) so printed output shows full evidence, not a collapsed summary
+     line; this is a fallback for print paths that skip that event. */
+  .finding-detail {
+    display: flex !important;
+  }
+
+  .chev {
+    display: none;
+  }
+
+  .section-block {
+    break-inside: avoid;
+  }
+
+  a[href]::after {
+    content: none;
   }
 }
 

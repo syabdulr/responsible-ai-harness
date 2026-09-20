@@ -141,10 +141,12 @@ export function buildFindingsView(report) {
       severityTone: c.finding !== undefined ? severityTone(c.finding.severity) : "none",
       affectedControl: c.finding?.affectedControl ?? null,
       questionIds,
+      questionProbabilities: c.judge?.perQuestionProbabilities ?? [],
       evidenceCount: c.evidenceRefs?.length ?? 0,
       confidencePct: confidencePct(c),
       judgeLabel: c.judge?.label ?? (c.judgeError !== undefined ? "error" : null),
       judgeId: c.judge?.judgeId ?? null,
+      judgeModel: c.judge?.model ?? null,
       reviewState: c.review !== undefined ? c.review.reason : (c.finding !== undefined ? "no_review_required" : "clean"),
       reviewStatus: c.review?.status ?? null,
       reasonCodes: c.finding?.reasonCodes ?? c.judge?.reasonCodes ?? [],
@@ -236,6 +238,9 @@ export function buildLimitations(report) {
     "Redaction is defense in depth, not a guarantee: pattern matching cannot catch every secret format or a novel encoding of one.",
     "The Fairness domain has no initial test plugin in this harness version, so it always reads \"not yet evaluated\" rather than a score.",
   ];
+  if (usesLiveJev) {
+    limitations.push("4-case synthetic validation, not production certification.");
+  }
   return limitations;
 }
 

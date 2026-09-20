@@ -66,10 +66,12 @@ export interface FindingRow {
   severityTone: SeverityTone;
   affectedControl: string | null;
   questionIds: string[];
+  questionProbabilities: { questionId: string; probability: number }[];
   evidenceCount: number;
   confidencePct: number | null;
   judgeLabel: JudgeLabel | "error" | null;
   judgeId: string | null;
+  judgeModel: string | null;
   reviewState: string;
   reviewStatus: "pending" | "resolved" | null;
   reasonCodes: string[];
