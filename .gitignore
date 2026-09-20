@@ -1,6 +1,8 @@
 node_modules/
 dist/
 evidence-out/
+evidence-out-live-jev/
 ui/data/
+ui/data-live/
 *.log
 .DS_Store

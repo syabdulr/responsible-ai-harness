@@ -9,7 +9,10 @@
 
 import { buildViewModel } from "./view-model.js";
 
-const DATA_BASE = "./data/";
+const DATA_BASES = {
+  offline: "./data/",
+  live: "./data-live/",
+};
 
 function escapeHtml(value) {
   return String(value)
@@ -200,6 +203,19 @@ function evidenceRefsHtml(refs) {
   return `<div class="evidence-refs">${refs.map((r) => `<span class="evidence-ref">${escapeHtml(r)}</span>`).join("")}</div>`;
 }
 
+function questionProbsHtml(questionProbabilities) {
+  if (!Array.isArray(questionProbabilities) || questionProbabilities.length === 0) return "";
+  return `<ul class="question-probs">${questionProbabilities.map((q) => {
+    const pct = Math.round((q.probability ?? 0) * 100);
+    return `
+    <li>
+      <span class="qid">${escapeHtml(q.questionId)}</span>
+      <span class="qval">${String(pct)}%</span>
+      <span class="qbar-track"><span class="qbar-fill" style="width:${String(pct)}%"></span></span>
+    </li>`;
+  }).join("")}</ul>`;
+}
+
 function renderFindings(vm) {
   const list = document.getElementById("findings-list");
   if (list === null) return;
@@ -239,8 +255,9 @@ function renderFindings(vm) {
         </div>
         ${f.judgeLabel !== null ? `
         <div class="finding-detail-block">
-          <h4>Judge (${escapeHtml(f.judgeId ?? "unknown")})</h4>
+          <h4>Judge (${escapeHtml(f.judgeId ?? "unknown")}${f.judgeModel !== null ? ` · ${escapeHtml(f.judgeModel)}` : ""})</h4>
           <p class="rec-reasons">${escapeHtml(f.judgeLabel)}${f.confidencePct !== null ? ` — confidence ${String(f.confidencePct)}%` : ""}${f.reasonCodes.length > 0 ? ` — ${f.reasonCodes.map(escapeHtml).join(", ")}` : ""}</p>
+          ${questionProbsHtml(f.questionProbabilities)}
         </div>` : ""}
         <div class="finding-detail-block">
           <h4>Evidence references</h4>
@@ -326,14 +343,19 @@ function renderLimitations(vm) {
   el.innerHTML = vm.limitations.map((l) => `<li>${escapeHtml(l)}</li>`).join("");
 }
 
-function wireExport(reportJsonText, runId) {
+// Mutable state the export buttons read at click time, so switching data
+// sources doesn't require adding/removing event listeners.
+const currentExport = { text: "", runId: undefined };
+
+function wireExportButtonsOnce() {
   const buttons = [document.getElementById("export-btn-top"), document.getElementById("export-btn-mobile")];
   const doExport = () => {
-    const blob = new Blob([reportJsonText], { type: "application/json" });
+    if (currentExport.text === "") return;
+    const blob = new Blob([currentExport.text], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${runId ?? "report"}.report.json`;
+    a.download = `${currentExport.runId ?? "report"}.report.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -342,12 +364,42 @@ function wireExport(reportJsonText, runId) {
   };
   for (const btn of buttons) {
     if (btn === null) continue;
-    btn.disabled = false;
     btn.addEventListener("click", doExport);
   }
 }
 
-async function main() {
+/** Force every finding <details> open for print, then restore prior state after. */
+function wirePrintDisclosure() {
+  let openedByPrint = [];
+  window.addEventListener("beforeprint", () => {
+    const all = document.querySelectorAll(".finding-row");
+    openedByPrint = [];
+    all.forEach((el) => {
+      if (!el.open) {
+        el.open = true;
+        openedByPrint.push(el);
+      }
+    });
+  });
+  window.addEventListener("afterprint", () => {
+    for (const el of openedByPrint) el.open = false;
+    openedByPrint = [];
+  });
+}
+
+async function fetchSources() {
+  try {
+    const res = await fetch("./data/sources.json", { cache: "no-store" });
+    if (!res.ok) return { sources: [{ id: "offline", available: true }] };
+    return await res.json();
+  } catch {
+    return { sources: [{ id: "offline", available: true }] };
+  }
+}
+
+/** Load and render one data source ("offline" or "live"). */
+async function loadSource(sourceId) {
+  const base = DATA_BASES[sourceId] ?? DATA_BASES.offline;
   let report;
   let manifest;
   let targetManifest;
@@ -355,10 +407,10 @@ async function main() {
   let reportText;
   try {
     const [reportRes, manifestJson, targetJson, verifyJson] = await Promise.all([
-      fetch(`${DATA_BASE}report.json`, { cache: "no-store" }),
-      fetchJson(`${DATA_BASE}bundle-manifest.json`).catch(() => undefined),
-      fetchJson(`${DATA_BASE}target-manifest.json`).catch(() => undefined),
-      fetchJson(`${DATA_BASE}verify.json`).catch(() => undefined),
+      fetch(`${base}report.json`, { cache: "no-store" }),
+      fetchJson(`${base}bundle-manifest.json`).catch(() => undefined),
+      fetchJson(`${base}target-manifest.json`).catch(() => undefined),
+      fetchJson(`${base}verify.json`).catch(() => undefined),
     ]);
     if (!reportRes.ok) throw new Error(`report.json: HTTP ${String(reportRes.status)}`);
     reportText = await reportRes.text();
@@ -380,7 +432,38 @@ async function main() {
   renderRecommendations(vm);
   renderIntegrity(vm);
   renderLimitations(vm);
-  wireExport(reportText, vm.topBar.runId ?? undefined);
+
+  currentExport.text = reportText;
+  currentExport.runId = vm.topBar.runId ?? undefined;
+  const exportButtons = [document.getElementById("export-btn-top"), document.getElementById("export-btn-mobile")];
+  for (const btn of exportButtons) if (btn !== null) btn.disabled = false;
+
+  const liveBadge = document.getElementById("live-jev-badge");
+  if (liveBadge !== null) liveBadge.hidden = sourceId !== "live";
+
+  const offlineTab = document.getElementById("source-tab-offline");
+  const liveTab = document.getElementById("source-tab-live");
+  if (offlineTab !== null) offlineTab.setAttribute("aria-selected", String(sourceId === "offline"));
+  if (liveTab !== null) liveTab.setAttribute("aria-selected", String(sourceId === "live"));
+}
+
+async function main() {
+  wireExportButtonsOnce();
+  wirePrintDisclosure();
+
+  const { sources } = await fetchSources();
+  const liveAvailable = Array.isArray(sources) && sources.some((s) => s.id === "live" && s.available === true);
+
+  const switchEl = document.getElementById("source-switch");
+  if (liveAvailable && switchEl !== null) {
+    switchEl.hidden = false;
+    document.getElementById("source-tab-offline")?.addEventListener("click", () => { loadSource("offline").catch(() => undefined); });
+    document.getElementById("source-tab-live")?.addEventListener("click", () => { loadSource("live").catch(() => undefined); });
+  }
+
+  // Offline is always the default view — a live bundle, even a verified
+  // one, is never shown on load without an explicit click.
+  await loadSource("offline");
 }
 
 main().catch((error) => {

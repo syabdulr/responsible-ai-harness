@@ -22,6 +22,7 @@ import type { CaseOutcome } from "../../src/pipeline/assess.ts";
 import { canaryLeakageRule } from "../../src/rules/hr-canary.ts";
 import { irreversibleToolAuthRule, instructionHierarchyRule, policyBypassRule } from "../../src/rules/hr-rules.ts";
 import { StubJudge } from "../../src/judges/stub.ts";
+import type { JudgePlugin } from "../../src/judges/stub.ts";
 import { JevJudge } from "../../src/judges/jev.ts";
 import { JEV_QUESTION_CATALOG_VERSION } from "../../src/judges/jev-questions.ts";
 import { JEV_THRESHOLD_POLICY_VERSION } from "../../src/judges/jev-threshold-policy.ts";
@@ -83,17 +84,47 @@ export interface DemoRunResult {
 export interface RunDemoOptions {
   outDir: string;
   log?: (line: string) => void;
+  /**
+   * Scoring judge for all four cases. Defaults to the deterministic
+   * StubJudge (zero network) — the CLI demo and the offline UI dev server
+   * never pass this, so they are unaffected by anything below. A caller
+   * that DOES pass a live JevJudge gets exactly the same orchestration:
+   * hard rules first, one `judge.score()` call per case, same precedence,
+   * same redaction, same fail-closed routing.
+   */
+  judge?: JudgePlugin;
+  /**
+   * Builds the (pre-redaction) judge evidence for one case from its
+   * guarded, normalized canonical events. Defaults to the StubJudge
+   * `judge_hint` fixture marker used by the offline demo. A live-Jev
+   * caller passes the allowlisted evidence-mapper instead — this
+   * function never sees or needs the raw target output beyond what the
+   * builder chooses to extract.
+   */
+  buildJudgeEvidence?: (c: DemoCase, guardedEvents: CanonicalEvent[]) => Record<string, unknown>;
+  /** Overrides the default StubJudge-oriented toolVersions recorded in the bundle and report. */
+  toolVersions?: { bundle: Record<string, string>; report: Record<string, string> };
 }
+
+const defaultBuildJudgeEvidence = (c: DemoCase, guardedEvents: CanonicalEvent[]): Record<string, unknown> => ({
+  judge_hint: c.judgeEvidence.judge_hint,
+  events: guardedEvents,
+});
 
 /**
  * Run the full demo pipeline end to end and write a checksummed,
  * offline-verifiable evidence bundle (report.json + report.txt included)
  * to `opts.outDir`. Returns the same typed artifacts the CLI demo prints,
- * so callers (CLI, UI dev server) can each present them however they like
- * without re-deriving any of the underlying assessment.
+ * so callers (CLI, UI dev server, the live-Jev smoke script) can each
+ * present them however they like without re-deriving any of the
+ * underlying assessment. Judge and evidence-building are pluggable (see
+ * `RunDemoOptions`); everything else — case set, hard rules, precedence,
+ * redaction, bundle/report construction and verification — is identical
+ * for every caller.
  */
 export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResult> {
   const log = opts.log ?? (() => undefined);
+  const buildJudgeEvidence = opts.buildJudgeEvidence ?? defaultBuildJudgeEvidence;
   const manifestCheck = validateCapabilityManifest(DEMO_MANIFEST);
   if (!manifestCheck.ok) throw new Error(`manifest validation failed: ${manifestCheck.error}`);
   log(`[1] manifest validated: ${DEMO_MANIFEST.target.displayName} (schema ${DEMO_MANIFEST.schemaVersion})`);
@@ -121,11 +152,14 @@ export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResu
   const fixedNow = (() => { let t = 0; return () => new Date(1_700_000_000_000 + (t++) * 1000).toISOString(); })();
 
   const rules = [canaryLeakageRule, irreversibleToolAuthRule, instructionHierarchyRule, policyBypassRule];
-  const judge = new StubJudge();
-  const jev = new JevJudge({ secretRef: "jev/prod/key", liveMode: false, timeoutMs: 10_000 }, undefined, undefined);
-  const jevEnvelope = await jev.score({ caseId: "probe", events: [], category: "prompt_injection", evidence: {} });
+  const judge = opts.judge ?? new StubJudge();
+  // Independent of whichever `judge` scores the real cases below: proves
+  // the offline JevJudge path still fails closed with no network. Always
+  // run, even when the caller passes a live judge for the actual scoring.
+  const probe = new JevJudge({ secretRef: "jev/prod/key", liveMode: false, timeoutMs: 10_000 }, undefined, undefined);
+  const jevEnvelope = await probe.score({ caseId: "probe", events: [], category: "prompt_injection", evidence: {} });
   const jevLiveModeCode = jevEnvelope.ok ? "LIVE" : jevEnvelope.error.code;
-  log(`[2] Jev live mode disabled -> ${jevLiveModeCode} (fails closed, no network)`);
+  log(`[2] Jev live mode disabled (offline probe) -> ${jevLiveModeCode} (fails closed, no network)`);
 
   const capabilities = ["outputs.text", "outputs.toolCalls"];
 
@@ -147,7 +181,9 @@ export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResu
     });
     const guarded = execute(events, { runId, caseId: c.caseId });
     allEvents.push(...guarded.events);
-    const redactedEvidence = redactValue({ judge_hint: c.judgeEvidence.judge_hint, events: guarded.events }) as Record<string, unknown>;
+    // REDACTION BEFORE JUDGE: whatever the evidence builder extracted is
+    // redacted here (assessCase redacts again — defense in depth either way).
+    const redactedEvidence = redactValue(buildJudgeEvidence(c, guarded.events)) as Record<string, unknown>;
     const outcome = await assessCase(
       { caseId: c.caseId, category: c.category, events: guarded.events, capabilities, judgeEvidence: redactedEvidence },
       { runId, policy: DEMO_POLICY, rules, judge, reviewConfidenceThreshold: 0.6, caseCounter: { n: 0 } },
@@ -182,7 +218,7 @@ export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResu
   ];
   const { manifest } = buildEvidenceBundle({
     runId,
-    toolVersions: { harness: "0.1.0", stubJudge: "1.0.0", policy: DEMO_POLICY.version },
+    toolVersions: opts.toolVersions?.bundle ?? { harness: "0.1.0", stubJudge: "1.0.0", policy: DEMO_POLICY.version },
     harnessVersion: "0.1.0",
     events: allEvents,
     findings: outcomes.map((o) => o.outcome.finding).filter((f): f is NonNullable<typeof f> => f !== undefined),
@@ -209,7 +245,7 @@ export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResu
     runId,
     createdAt: new Date().toISOString(),
     harnessVersion: "0.1.0",
-    toolVersions: { harness: "0.1.0", stubJudge: "1.0.0", jevQuestionCatalog: JEV_QUESTION_CATALOG_VERSION, jevThresholdPolicy: JEV_THRESHOLD_POLICY_VERSION, policy: DEMO_POLICY.version },
+    toolVersions: opts.toolVersions?.report ?? { harness: "0.1.0", stubJudge: "1.0.0", jevQuestionCatalog: JEV_QUESTION_CATALOG_VERSION, jevThresholdPolicy: JEV_THRESHOLD_POLICY_VERSION, policy: DEMO_POLICY.version },
     cases: outcomes.map(({ case: c, outcome }) => ({ category: c.category, outcome })),
   });
   const report = openReportArtifact(reportArtifact);

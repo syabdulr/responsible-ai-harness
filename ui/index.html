@@ -19,6 +19,10 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <div class="source-switch" id="source-switch" hidden role="tablist" aria-label="Report data source">
+          <button class="source-tab" id="source-tab-offline" type="button" role="tab" aria-selected="true">Offline</button>
+          <button class="source-tab" id="source-tab-live" type="button" role="tab" aria-selected="false">Live Jev</button>
+        </div>
         <span class="chip chip-neutral" id="topbar-version">schema —</span>
         <span class="chip" id="topbar-integrity">Verifying…</span>
         <button class="btn btn-primary" id="export-btn-top" type="button" disabled>Export report</button>
@@ -32,7 +36,10 @@
       <section class="card report-header" id="report-header" aria-labelledby="report-header-title">
         <div class="report-header-top">
           <div>
-            <p class="eyebrow">System under test</p>
+            <div class="eyebrow-row">
+              <p class="eyebrow">System under test</p>
+              <span class="badge badge-violet" id="live-jev-badge" hidden>Live Jev</span>
+            </div>
             <h1 id="report-header-title" class="report-title">—</h1>
             <p class="report-summary" id="report-summary">Loading assessment summary…</p>
           </div>
