@@ -19,7 +19,10 @@ import type {
   ReviewTask,
   RuleResult,
 } from "../contracts/types.ts";
-import { redactValue, validateBundleManifest, parseJson } from "../contracts/validation.ts";
+import { findResidualRiskIndicators, redactString, redactValue, validateBundleManifest, parseJson } from "../contracts/validation.ts";
+import { validateReport } from "../contracts/report-validation.ts";
+import { openReportArtifact } from "../report/build-report.ts";
+import type { ValidatedReportArtifact } from "../report/build-report.ts";
 import { sha256 } from "../normalizer/normalize.ts";
 
 export interface BundleInput {
@@ -78,24 +81,65 @@ export function buildEvidenceBundle(input: BundleInput): { manifest: EvidenceBun
   return { manifest, dir: input.outDir };
 }
 
-/** Attach already-redacted reports to the bundle manifest + checksums. */
+/**
+ * Attach the human and machine reports to the bundle manifest + checksums.
+ *
+ * `machineReport` can ONLY be a `ValidatedReportArtifact` — the sealed,
+ * branded wrapper `buildReport` returns (see its doc comment) — never a
+ * plain `ReportV1` a caller could assemble or mutate by hand. Getting a
+ * value of that type without going through `buildReport` requires a
+ * visible `as unknown as` cast; this function does not rely on that
+ * alone, though. It re-verifies the artifact's integrity hash itself
+ * (`openReportArtifact` throws if the hash no longer matches the
+ * report's content — the exact case of a report mutated, accidentally or
+ * not, after `buildReport` returned it), then re-validates the contract
+ * shape (`validateReport`) and runs a residual-risk scan (the same
+ * paranoid second pass `JevJudge` runs before a live call) before
+ * anything is written. Any of these three checks failing throws rather
+ * than writing unverified or stale content to disk. `humanText`/
+ * `reproductionText` have no equivalent typed contract, so they are
+ * redacted again here (idempotent defense in depth) regardless of what
+ * the caller already did.
+ */
 export function attachReports(
   outDir: string,
   manifest: EvidenceBundleManifest,
-  reports: { humanText: string; machineJson: string; reproductionText?: string },
+  reports: { humanText: string; machineReport: ValidatedReportArtifact; reproductionText?: string },
 ): EvidenceBundleManifest {
+  // Throws on a stale/mismatched hash — e.g. the report was mutated after
+  // buildReport sealed it, or the "artifact" was forged via an unsafe cast
+  // with a hash that doesn't match its own content.
+  const report = openReportArtifact(reports.machineReport);
+
+  const reportCheck = validateReport(report);
+  if (!reportCheck.ok) {
+    throw new Error(`attachReports: machineReport failed contract validation: ${reportCheck.error}`);
+  }
+  // Scan everything except `integrity`: its `reportSha256` is legitimately
+  // a 64-char hex digest, which is exactly the shape
+  // `residual_high_entropy_hex` exists to catch elsewhere.
+  const { integrity, ...scannable } = reportCheck.value;
+  void integrity;
+  const residual = findResidualRiskIndicators(scannable);
+  if (residual.length > 0) {
+    throw new Error(`attachReports: machineReport still matches high-risk patterns after redaction (${residual.join(", ")}); refusing to write it`);
+  }
+
   const humanPath = "report.txt";
   const machinePath = "report.json";
-  writeFileSync(join(outDir, humanPath), reports.humanText, "utf8");
-  writeFileSync(join(outDir, machinePath), reports.machineJson, "utf8");
+  const humanText = redactString(reports.humanText);
+  const machineJson = `${JSON.stringify(reportCheck.value, null, 2)}\n`;
+  writeFileSync(join(outDir, humanPath), humanText, "utf8");
+  writeFileSync(join(outDir, machinePath), machineJson, "utf8");
   const newEntries = [
     ...manifest.entries,
-    { path: humanPath, sha256: sha256(reports.humanText), bytes: Buffer.byteLength(reports.humanText) },
-    { path: machinePath, sha256: sha256(reports.machineJson), bytes: Buffer.byteLength(reports.machineJson) },
+    { path: humanPath, sha256: sha256(humanText), bytes: Buffer.byteLength(humanText) },
+    { path: machinePath, sha256: sha256(machineJson), bytes: Buffer.byteLength(machineJson) },
   ];
   if (reports.reproductionText !== undefined) {
-    writeFileSync(join(outDir, "reproduction.txt"), reports.reproductionText, "utf8");
-    newEntries.push({ path: "reproduction.txt", sha256: sha256(reports.reproductionText), bytes: Buffer.byteLength(reports.reproductionText) });
+    const reproductionText = redactString(reports.reproductionText);
+    writeFileSync(join(outDir, "reproduction.txt"), reproductionText, "utf8");
+    newEntries.push({ path: "reproduction.txt", sha256: sha256(reproductionText), bytes: Buffer.byteLength(reproductionText) });
   }
   const updated: EvidenceBundleManifest = {
     ...manifest,
