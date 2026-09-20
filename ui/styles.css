@@ -55,6 +55,22 @@
   box-sizing: border-box;
 }
 
+/*
+ * Without this, any element that ALSO carries a class setting its own
+ * `display` (e.g. `.badge { display: inline-flex }`, `.source-switch {
+ * display: inline-flex }`) silently defeats the HTML `hidden` attribute:
+ * both rules have equal specificity, and an author rule always beats the
+ * UA stylesheet's default `[hidden] { display: none }` regardless of
+ * source order. That previously left the "Live Jev" badge and the
+ * offline/live source-switch tabs visibly rendered even when JS had set
+ * `hidden = true` on an offline-only run with no verified live bundle —
+ * exactly the kind of truthful-labeling bug this UI cannot afford.
+ * `!important` makes `hidden` unconditionally win over any future class.
+ */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -724,6 +740,16 @@ details[open] > .finding-summary .chev {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.rule-list li span:last-child {
+  /* Rule ids and reason codes are underscore-joined (e.g.
+     "untrusted_content_drove_side_effect") with no natural break
+     opportunity, so on a narrow viewport this flex item's default
+     min-width:auto refused to shrink below that single "word" and the
+     text ran off the right edge of the card instead of wrapping. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .rule-outcome {
   font-family: var(--font-sans);
   font-weight: 500;
@@ -993,6 +1019,23 @@ details[open] > .finding-summary .chev {
 
   .topbar-actions #export-btn-top {
     display: none;
+  }
+
+  /* Below ~430px (e.g. a 390px phone), topbar-id (mark + title) plus the
+     version/integrity chips no longer fit on one line — .topbar-actions
+     has `flex: none` and never shrinks, so without wrapping it silently
+     overflowed past the right edge of the viewport (chips clipped,
+     unreachable without horizontal scroll). Wrapping to a second line
+     keeps every chip visible instead of cutting it off. */
+  .topbar-inner {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+
+  .topbar-actions {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
   }
 
   .risk-hero-grid {

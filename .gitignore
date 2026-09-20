@@ -6,3 +6,6 @@ ui/data/
 ui/data-live/
 *.log
 .DS_Store
+.env
+.env.*
+!.env.example

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Model-agnostic assessment harness for AI models and agents: deterministic hard rules before replaceable judges, evidence-first findings, offline-verifiable bundles.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -15,6 +15,9 @@
     "demo": "tsx scripts/run-demo.ts",
     "ui": "tsx scripts/serve-report-ui.ts",
     "assess:jev-live": "tsx scripts/assess-jev-live.ts",
+    "jev:secret:set": "tsx scripts/jev-secret.ts set",
+    "jev:secret:remove": "tsx scripts/jev-secret.ts remove",
+    "jev:secret:status": "tsx scripts/jev-secret.ts status",
     "check": "npm run typecheck && npm run lint && npm run test",
     "smoke:jev": "tsx scripts/smoke-jev.ts",
     "smoke:jev-mcp": "tsx scripts/smoke-jev-mcp.ts",

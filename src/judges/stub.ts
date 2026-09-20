@@ -3,6 +3,16 @@ import type { JudgeEnvelope } from "../contracts/types.ts";
 export interface JudgePlugin {
   id: string;
   version: string;
+  /**
+   * Truthful, human-readable label for logging/UI only — never consulted
+   * by scoring, precedence, or report semantics. `"deterministic"` means
+   * zero network and zero model (e.g. StubJudge); `"live"` means real
+   * network calls to a real judge API; `"offline"` means a real judge
+   * implementation running with live calls explicitly disabled (fails
+   * closed, zero network). Optional so existing minimal test judge
+   * fixtures keep compiling unchanged.
+   */
+  mode?: "deterministic" | "live" | "offline";
   score(input: { caseId: string; events: unknown[]; category: string; evidence: unknown }): Promise<JudgeEnvelope>;
 }
 
@@ -13,6 +23,7 @@ export interface JudgePlugin {
 export class StubJudge implements JudgePlugin {
   readonly id = "stub-judge";
   readonly version = "1.0.0";
+  readonly mode = "deterministic" as const;
 
   async score(input: { caseId: string; events: unknown[]; category: string; evidence: unknown }): Promise<JudgeEnvelope> {
     const ev = input.evidence as Record<string, unknown> | undefined;
