@@ -5,7 +5,11 @@
  * could matter, and before any client/transport is constructed):
  *   - `JEV_SMOKE_CONFIRM` must equal the exact literal
  *     `I_UNDERSTAND_THIS_MAKES_ONE_LIVE_JEV_CALL`.
- *   - `TYPESAFE_API_KEY` must be set.
+ *   - A Jev API key must resolve: `TYPESAFE_API_KEY` env var if explicitly
+ *     set, else (macOS only) the key stored in the macOS Keychain under
+ *     service `responsible-ai-harness-jev`, account = current OS username
+ *     (see `src/judges/jev-local-secret-provider.ts`, and
+ *     `scripts/jev-secret.ts` / `npm run jev:secret:set` to store one).
  * Either missing/wrong => exit 1, zero calls, zero client construction.
  *
  * Scope: the four fixed synthetic demo cases only
@@ -35,7 +39,10 @@
  * A verification failure writes nothing to `ui/data-live/` — the UI's
  * offline default is never put at risk by a bad live run.
  *
- * Run (after you provide both env vars yourself):
+ * Run, after storing a key once with `npm run jev:secret:set` (macOS Keychain):
+ *   JEV_SMOKE_CONFIRM=I_UNDERSTAND_THIS_MAKES_ONE_LIVE_JEV_CALL npm run assess:jev-live
+ *
+ * Or, for CI / non-macOS, with an explicit env var instead of Keychain:
  *   TYPESAFE_API_KEY=... JEV_SMOKE_CONFIRM=I_UNDERSTAND_THIS_MAKES_ONE_LIVE_JEV_CALL npm run assess:jev-live
  */
 
@@ -46,7 +53,7 @@ import { DEMO_CASES } from "../src/fixtures/cases.ts";
 import type { DemoCase } from "../src/fixtures/cases.ts";
 import { JevJudge } from "../src/judges/jev.ts";
 import { createTypeSafeJevTransport } from "../src/judges/jev-transport-typesafe.ts";
-import { createEnvSecretProvider, JEV_MCP_SECRET_REF } from "../src/mcp/jev-mcp-connector.ts";
+import { createLocalSecretProvider, JEV_LOCAL_SECRET_REF } from "../src/judges/jev-local-secret-provider.ts";
 import { buildJevEvidence, EvidenceMappingError } from "../src/judges/evidence-mapper.ts";
 import { JEV_QUESTION_CATALOG_VERSION, CATEGORY_QUESTION_IDS } from "../src/judges/jev-questions.ts";
 import { JEV_THRESHOLD_POLICY_VERSION } from "../src/judges/jev-threshold-policy.ts";
@@ -66,12 +73,14 @@ const EXPECTED_QUESTION_COUNTS: Record<string, number> = {
 
 /**
  * Checked first, before anything else in `main` — including before the
- * live `JevJudge`/transport are constructed. Never reads the key value
- * into a local variable here; only confirms it is present. The actual
- * key is resolved later, exactly once, inside `createEnvSecretProvider`'s
- * closure (the one place in the connector/live-script surface allowed to
- * read it), and handed straight to the SDK client — never stored on this
- * script's own state.
+ * live `JevJudge`/transport are constructed. The resolved key (if any) is
+ * held only long enough to test it for presence with `!== undefined` and
+ * is then discarded — it is not assigned to any state outside this
+ * function, not logged, not printed. The actual key used for the real
+ * call is resolved again later, exactly once per case, inside
+ * `createLocalSecretProvider`'s closure (env var, else macOS Keychain —
+ * the one place in this script allowed to read either), and handed
+ * straight to the SDK client.
  */
 function checkGate(): void {
   const confirm = process.env.JEV_SMOKE_CONFIRM;
@@ -83,9 +92,14 @@ function checkGate(): void {
     );
     process.exit(1);
   }
-  const hasKey = process.env.TYPESAFE_API_KEY !== undefined && process.env.TYPESAFE_API_KEY.length > 0;
+  const hasKey = createLocalSecretProvider().resolve(JEV_LOCAL_SECRET_REF) !== undefined;
   if (!hasKey) {
-    console.error("Refusing to run: TYPESAFE_API_KEY is not set. Zero calls were made.");
+    console.error(
+      "Refusing to run: no Jev API key available.\n" +
+      "Either set TYPESAFE_API_KEY for this run, or store one once in macOS Keychain with:\n" +
+      "  npm run jev:secret:set\n" +
+      "Zero calls were made.",
+    );
     process.exit(1);
   }
 }
@@ -128,9 +142,9 @@ async function main(): Promise<void> {
 
   console.log("== LIVE Jev smoke run — 4 fixed synthetic cases, real network calls ==\n");
 
-  const secretProvider = createEnvSecretProvider();
+  const secretProvider = createLocalSecretProvider();
   const liveJudge = new JevJudge(
-    { secretRef: JEV_MCP_SECRET_REF, liveMode: true, timeoutMs: 15_000 },
+    { secretRef: JEV_LOCAL_SECRET_REF, liveMode: true, timeoutMs: 15_000 },
     secretProvider,
     (key: string) => createTypeSafeJevTransport(key),
   );
@@ -139,6 +153,7 @@ async function main(): Promise<void> {
   const countingJudge = {
     id: liveJudge.id,
     version: liveJudge.version,
+    mode: liveJudge.mode,
     score: (input: Parameters<JevJudge["score"]>[0]) => {
       callCount += 1;
       return liveJudge.score(input);

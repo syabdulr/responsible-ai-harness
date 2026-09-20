@@ -67,6 +67,11 @@ export class JevJudge implements JudgePlugin {
     private readonly clientFactory: JevClientFactory | undefined,
   ) {}
 
+  /** Truthful mode label for logging/UI only (see `JudgePlugin.mode`) — never consulted by scoring. */
+  get mode(): "live" | "offline" {
+    return this.config.liveMode ? "live" : "offline";
+  }
+
   async score(input: { caseId: string; events: unknown[]; category: string; evidence: unknown }): Promise<JudgeEnvelope> {
     if (!this.config.liveMode) {
       return { ok: false, error: { code: "jev_live_mode_disabled", message: `Jev live mode disabled; case ${input.caseId} not scored (no network calls)`, timeout: false } };

@@ -153,13 +153,20 @@ export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResu
 
   const rules = [canaryLeakageRule, irreversibleToolAuthRule, instructionHierarchyRule, policyBypassRule];
   const judge = opts.judge ?? new StubJudge();
-  // Independent of whichever `judge` scores the real cases below: proves
-  // the offline JevJudge path still fails closed with no network. Always
-  // run, even when the caller passes a live judge for the actual scoring.
+  const judgeMode = judge.mode ?? "unknown";
+  const evidenceSourceLabel = opts.buildJudgeEvidence !== undefined
+    ? "custom evidence mapper (caller-supplied opts.buildJudgeEvidence)"
+    : "fixture judge_hint marker (offline demo default, not live evidence)";
+  // A self-check, structurally independent of whichever `judge` scores the
+  // real cases below: this ALWAYS constructs its own separate, always-
+  // liveMode:false JevJudge instance to prove that path still fails closed
+  // with no network, even on a run whose real `judge` (logged next, in [3])
+  // is live. This line never describes this run's actual scoring judge or
+  // mode — see [3] for that.
   const probe = new JevJudge({ secretRef: "jev/prod/key", liveMode: false, timeoutMs: 10_000 }, undefined, undefined);
   const jevEnvelope = await probe.score({ caseId: "probe", events: [], category: "prompt_injection", evidence: {} });
   const jevLiveModeCode = jevEnvelope.ok ? "LIVE" : jevEnvelope.error.code;
-  log(`[2] Jev live mode disabled (offline probe) -> ${jevLiveModeCode} (fails closed, no network)`);
+  log(`[2] internal self-check (unrelated to this run's scoring judge, see [3]): a separate always-offline JevJudge instance fails closed with no network -> ${jevLiveModeCode}`);
 
   const capabilities = ["outputs.text", "outputs.toolCalls"];
 
@@ -192,7 +199,7 @@ export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResu
   }
   server.close();
 
-  log(`[3] ${outcomes.length} cases assessed via REST adapter — hard rules first, StubJudge second\n`);
+  log(`[3] ${outcomes.length} cases assessed via REST adapter — hard rules first, then judge "${judge.id}" v${judge.version} (mode: ${judgeMode}) second\n`);
   for (const { case: c, outcome } of outcomes) {
     const fails = outcome.ruleResults.filter((r) => r.outcome === "fail").map((r) => r.ruleId);
     log(`  ${c.caseId} (${c.category})`);
@@ -262,6 +269,11 @@ export async function runDemoPipeline(opts: RunDemoOptions): Promise<DemoRunResu
 
   const verify = await verifyBundle(outDir);
   log(`[7] bundle self-verification: ${verify.ok ? "OK" : "FAILED"} — ${String(verify.checked)} entries checked${verify.failures.length > 0 ? `, failures: ${verify.failures.join("; ")}` : ""}\n`);
+
+  log(
+    `[8] run summary — judge: "${judge.id}" v${judge.version} (mode: ${judgeMode}) | calls: ${String(outcomes.length)} case(s) scored | ` +
+    `evidence source: ${evidenceSourceLabel} | bundle written to: ${outDir}`,
+  );
 
   return {
     runId,
