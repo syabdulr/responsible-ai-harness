@@ -6,7 +6,7 @@ A model-agnostic assessment harness that runs AI models and agents through deter
 
 ## Screenshots
 
-All screenshots below are from the **offline demo** (`npm run demo` + `npm run ui`) against the four committed synthetic fixture cases — no real model, no network call, no live Jev call. Captured at 1440px (desktop) and 390px (mobile, iPhone-width).
+The screenshots directly below are from the **offline demo** (`npm run demo` + `npm run ui`) against the four committed synthetic fixture cases — no real model, no network call, no live Jev call. Captured at 1440px (desktop) and 390px (mobile, iPhone-width). A genuine [Live Jev run](#live-jev-run) screenshot follows in its own section below.
 
 | | |
 |---|---|
@@ -19,7 +19,21 @@ All screenshots below are from the **offline demo** (`npm run demo` + `npm run u
 | ![Mobile — recommendations, ranked worst-first](docs/screenshots/mobile-offline-recommendations.png) | ![Mobile — findings list](docs/screenshots/mobile-offline-findings.png) |
 | Recommendations, ranked worst-first | Findings list |
 
-A "Live Jev" source-switch tab and badge appear only after a genuine, freshly re-verified live run exists (see [Live Jev run](#live-jev-run-real-billed-api-calls)) — the offline view above never shows them, and a screenshot of that state is not yet included here (see [Limitations](#honest-limitations)).
+### Live Jev run
+
+The screenshot below is from a **genuine live run** (`npm run assess:jev-live`) — real, billed Jev API calls against the four fixture cases, not the offline demo. It shows the "Live Jev" source tab and badge, which only ever appear after the UI server has freshly re-verified that live bundle's checksums and report-integrity hash from scratch.
+
+| |
+|---|
+| ![Desktop — Live Jev report overview: risk score, Live Jev badge, findings and human-review summary](docs/screenshots/desktop-live-jev-top.png) |
+| **Live Jev run** — report overview: risk score, "Live Jev" badge, 3 findings across 4 cases assessed, 1 case routed to human review, 80% average confidence |
+
+Spend/token evidence for this same run, from the TypeSafe dashboard:
+
+| |
+|---|
+| ![TypeSafe usage dashboard: $0.0001 spend, 1,940 input tokens](docs/screenshots/typesafe-usage.png) |
+| TypeSafe usage for this run — $0.0001 spend, 1,940 input tokens |
 
 ## Features
 
@@ -208,7 +222,7 @@ This repository is built and tested as a **local, single-operator tool**. If you
 - **No production certification of any kind.** Nothing here constitutes a compliance, safety, or regulatory certification for any model or agent. It is an assessment tool, not a stamp of approval.
 - **No evidence signing.** Integrity today is sha256 checksums plus a self-consistent digest and report hash — not a cryptographic signature from a trusted key. A sufficiently privileged local attacker who can rewrite a bundle in place and recompute its own checksums is not caught by this alone.
 - **The local server is not for public internet exposure.** `scripts/serve-report-ui.ts` has no authentication, is not TLS-terminated, and is designed to bind to `127.0.0.1` only. See [Public deployment guidance](#public-deployment-guidance).
-- **A "Live Jev" screenshot is not yet included.** The screenshots above are all from the offline demo; a genuine live-run screenshot will be added once one is captured against a freshly verified live bundle.
+- **A "Live Jev" screenshot is now included.** See [Live Jev run](#live-jev-run) in [Screenshots](#screenshots): 4 cases assessed, 3 findings, 1 case routed to human review, 80% average confidence, captured against a freshly verified live bundle. Real spend/token evidence for that same run — $0.0001, 1,940 input tokens — is in [docs/screenshots/typesafe-usage.png](docs/screenshots/typesafe-usage.png).
 - **Font stack has no external network fonts.** The UI intentionally loads no remote fonts (see `ui/styles.css`), so its typography approximates rather than matches any specific reference design across different machines.
 
 ## License
