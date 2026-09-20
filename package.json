@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "demo": "tsx scripts/run-demo.ts",
+    "ui": "tsx scripts/serve-report-ui.ts",
     "check": "npm run typecheck && npm run lint && npm run test",
     "smoke:jev": "tsx scripts/smoke-jev.ts",
     "smoke:jev-mcp": "tsx scripts/smoke-jev-mcp.ts",

@@ -1,5 +1,6 @@
 node_modules/
 dist/
 evidence-out/
+ui/data/
 *.log
 .DS_Store

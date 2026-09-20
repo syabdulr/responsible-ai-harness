@@ -25,6 +25,7 @@
   "include": [
     "src/**/*",
     "tests/**/*",
-    "scripts/**/*"
+    "scripts/**/*",
+    "ui/**/*.d.ts"
   ]
 }
