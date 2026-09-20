@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Assessment Report — Responsible AI Harness</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to report</a>
+
+  <header class="topbar" id="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-id">
+        <span class="topbar-mark" aria-hidden="true">◆</span>
+        <div class="topbar-meta">
+          <span class="topbar-title">Responsible AI Harness</span>
+          <span class="topbar-sub" id="topbar-run">Loading report…</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="chip chip-neutral" id="topbar-version">schema —</span>
+        <span class="chip" id="topbar-integrity">Verifying…</span>
+        <button class="btn btn-primary" id="export-btn-top" type="button" disabled>Export report</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="shell">
+
+      <section class="card report-header" id="report-header" aria-labelledby="report-header-title">
+        <div class="report-header-top">
+          <div>
+            <p class="eyebrow">System under test</p>
+            <h1 id="report-header-title" class="report-title">—</h1>
+            <p class="report-summary" id="report-summary">Loading assessment summary…</p>
+          </div>
+        </div>
+        <dl class="meta-chips" id="meta-chips" aria-label="Report metadata"></dl>
+      </section>
+
+      <section class="card risk-hero" id="risk-hero" aria-labelledby="risk-hero-title">
+        <div class="risk-hero-grid">
+          <div class="risk-score-block">
+            <p class="eyebrow" id="risk-hero-title">Deterministic risk score</p>
+            <div class="risk-score-row">
+              <span class="risk-score" id="risk-score">—</span>
+              <span class="risk-score-scale">/ 100</span>
+            </div>
+            <span class="badge" id="risk-verdict-badge">—</span>
+            <p class="risk-detail" id="risk-verdict-detail"></p>
+            <div class="risk-bar-track" role="img" aria-label="Risk score bar">
+              <div class="risk-bar-fill" id="risk-bar-fill"></div>
+            </div>
+          </div>
+          <div class="jev-block">
+            <p class="eyebrow eyebrow-violet">Jev classification</p>
+            <div class="jev-summary" id="jev-summary"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-block" aria-labelledby="domains-title">
+        <div class="section-heading">
+          <h2 id="domains-title">Domain summary</h2>
+          <p class="section-subtitle">Findings grouped by review domain, not by raw test category.</p>
+        </div>
+        <div class="domain-grid" id="domain-grid"></div>
+      </section>
+
+      <section class="section-block" aria-labelledby="findings-title">
+        <div class="section-heading">
+          <h2 id="findings-title">Findings</h2>
+          <p class="section-subtitle">Every assessed case, hard-rule result first, judge result second.</p>
+        </div>
+        <div class="card findings-card">
+          <div class="findings-header" aria-hidden="true">
+            <span>Case</span>
+            <span>Domain</span>
+            <span>Severity</span>
+            <span>Control / questions</span>
+            <span>Evidence</span>
+            <span>Confidence</span>
+            <span>Review</span>
+          </div>
+          <div id="findings-list"></div>
+        </div>
+      </section>
+
+      <section class="section-block" aria-labelledby="recs-title">
+        <div class="section-heading">
+          <h2 id="recs-title">Recommendations</h2>
+          <p class="section-subtitle">Ranked worst-first: run-level verdict, then per-case actions.</p>
+        </div>
+        <div class="rec-list" id="rec-list"></div>
+      </section>
+
+      <section class="section-block" aria-labelledby="integrity-title">
+        <div class="section-heading">
+          <h2 id="integrity-title">Integrity</h2>
+          <p class="section-subtitle">Offline-verifiable evidence: schema, hashes, redaction, and bundle checks.</p>
+        </div>
+        <div class="card integrity-card" id="integrity-card"></div>
+      </section>
+
+      <section class="section-block" aria-labelledby="limitations-title">
+        <div class="section-heading">
+          <h2 id="limitations-title">Known limitations</h2>
+        </div>
+        <div class="card limitations-card">
+          <ul id="limitations-list" class="limitations-list"></ul>
+        </div>
+      </section>
+
+      <footer class="page-footer">
+        <p>Assessment only — this report does not block production requests. See the evidence bundle for the full, offline-verifiable record.</p>
+      </footer>
+    </div>
+  </main>
+
+  <div class="mobile-export-bar" id="mobile-export-bar">
+    <button class="btn btn-primary btn-block" id="export-btn-mobile" type="button" disabled>Export report</button>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
